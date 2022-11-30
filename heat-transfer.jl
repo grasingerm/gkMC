@@ -1,75 +1,93 @@
-using StaticArrays
-import Base.CartesianIndex
+@everywhere using StaticArrays
+@everywhere import Base.CartesianIndex
 using Plots; pyplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile
 using PProf
+using Distributed
 
-abstract type HeatTrans; end
+@everywhere abstract type HeatTrans; end
 
 κ_to_a(κ::Real, σ::Real, ρ::Real) = sqrt(κ / (σ*ρ))
 
-struct ThermalBitTrans <: HeatTrans
+@everywhere struct ThermalBitTrans <: HeatTrans
     a::Real
     h::Real
     δT::Real
     #σρ::Real
 end
 
-struct PoissonTrans <: HeatTrans
+@everywhere struct PoissonTrans <: HeatTrans
     a::Real
 end
 
-Point = SVector{3, Float64};
+@everywhere Point = SVector{3, Float64};
 
-mutable struct KineticMonteCarlo
+@everywhere mutable struct KineticMonteCarlo
     t::Real
     T::Array{Float64, 3}
     const h::Real
     const offset::Point
 end
 
-function KineticMonteCarlo(dims::Point, h::Real; 
+@everywhere function KineticMonteCarlo(dims::Point, h::Real; 
                            T0::Real = 0.0, offset::Point=Point(0.0, 0.0, 0.0))
     ni, nj, nk = map(i -> length(0.0:h:dims[i]), 1:3)
     KineticMonteCarlo(0.0, fill(T0, ni, nj, nk), h, offset)
 end
 
-function ijk_to_pos(i::Int, j::Int, k::Int; 
-                    h::Real = 1.0, offset::Point=Point(0.0, 0.0, 0.0))
+@everywhere function ijk_to_pos(i::Int, j::Int, k::Int; h::Real = 1.0, 
+                                offset::Point=Point(0.0, 0.0, 0.0))
     offset + h*Point(i-1, j-1, k-1)
 end
 
-Idx = SVector{3, Int};
-CartesianIndex(idx::Idx) = CartesianIndex(Tuple(idx));
-nnbrs = [
-         Idx(1, 0, 0), Idx(-1, 0, 0),
-         Idx(0, 1, 0), Idx(0, -1, 0),
-         Idx(0, 0, 1), Idx(0, 0, -1)
-        ];
+@everywhere Idx = SVector{3, Int}
+@everywhere CartesianIndex(idx::Idx) = CartesianIndex(Tuple(idx))
+@everywhere nnbrs = [
+                        Idx(1, 0, 0),
+                        Idx(0, 1, 0),
+                        Idx(0, 0, 1),
+                    ]
+@everywhere function vidx_to_Idx(idx::Int, ni::Int, nj::Int, nk::Int)
+    i = ((idx-1) % ni) + 1
+    j = (((idx-1) ÷ ni) % nj) + 1
+    k = ((idx-1) ÷ (ni*nj)) + 1
+    Idx(i, j, k)
+end
 
 function heat_transfer_events(kmc::KineticMonteCarlo, tbt::ThermalBitTrans;
                               active::Array{Bool, 3} = fill(true, size(kmc.T)))
     events = []
     c = tbt.a^2 / (kmc.h^2 * tbt.δT)
     ni, nj, nk = size(kmc.T)
-    for i=1:ni, j=1:nj, k=1:nk
-        J = Idx(i, j, k)
-        @inbounds Tj = kmc.T[CartesianIndex(J)]
-        for nbr in nnbrs
-            K = J + nbr
-            @inbounds if (1 <= K[1] <= ni && 1 <= K[2] <= nj && 1 <= K[3] <= nk 
-                          && active[CartesianIndex(K)])
-                @inbounds Tk = kmc.T[CartesianIndex(K)]
-                if Tj > Tk
-                    rate = c * (Tj - Tk)
-                    push!(events, (from=J, to=K, rate=rate))
+    nn = ni*nj*nk
+    np = nprocs()
+    pp = round(Int, nn / np)
+    idx_ranges = [( (i-1)*pp + 1):( i*pp ) for i=1:(np-1) ]
+    push!(idx_ranges, (idx_ranges[end].stop+1):nn)
+    events = vcat(pmap(idx_range -> begin
+        local_events = []
+        for idx in idx_range
+            J = vidx_to_Idx(idx, ni, nj, nk)
+            @inbounds Tj = kmc.T[CartesianIndex(J)]
+            for nbr in nnbrs
+                K = J + nbr
+                @inbounds if (1 <= K[1] <= ni && 1 <= K[2] <= nj && 1 <= K[3] <= nk 
+                              && active[CartesianIndex(K)])
+                    @inbounds Tk = kmc.T[CartesianIndex(K)]
+                    if Tj > Tk
+                        rate = c * (Tj - Tk)
+                        push!(local_events, (from=J, to=K, rate=rate))
+                    elseif Tj < Tk
+                        rate = c * (Tk - Tj)
+                        push!(local_events, (from=K, to=J, rate=rate))
+                    end
                 end
             end
         end
-    end
-    return events
+        local_events
+    end, idx_ranges)... )
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, tbt::ThermalBitTrans)
@@ -137,18 +155,18 @@ end
 
 function main2(; maxiter=Inf, doplot::Bool=true)
     th = 1.0   # cm
-    ℓ = 5.0   # cm
-    a = 1.0   # cm/s^(1/2)
-    h = 0.05  # cm
-    δT = 0.2  # K
+    ℓ = 5.0    # cm
+    a = 1.0    # cm/s^(1/2)
+    h = 0.2    # cm
+    δT = 0.5   # K
     xs = 0:h:ℓ
     ni = length(xs)
     nj = ni
-    Xs = repeat(reshape(xs, 1, ni), 1, nj)
-    Ys = repeat(xs, ni, 1)
+    @show Xs = repeat(xs, 1, nj)
+    @show Ys = repeat(reshape(xs, 1, nj), ni, 1)
     T0 = 200.0
     Tb = 100.0
-    analyt_T(x, y, t) = (T0-Tb)*erfc(x / (2*a*sqrt(t))*erfc(y / (2*a*sqrt(t)))) + Tb
+    analyt_T(x, y, t) = (T0-Tb)*erf(x / (2*a*sqrt(t)))*erf(y / (2*a*sqrt(t))) + Tb
 
     @show tbt = ThermalBitTrans(a, h, δT)
     @show kmc = KineticMonteCarlo(Point(ℓ, ℓ, 0.0), h; T0=T0)
@@ -220,4 +238,5 @@ if false # profile case 2
     readline()
 end
 
+@time main1()
 @time main2()
