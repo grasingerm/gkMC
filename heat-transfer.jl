@@ -106,7 +106,7 @@ function main1(; doplot::Bool=true)
     A = 1.0   # cm^2
     ℓ = 5.0   # cm
     a = 1.0   # cm/s^(1/2)
-    h = 0.05  # cm
+    h = 0.025  # cm
     δT = 0.2  # K
     xs = 0:h:ℓ
     ni = length(xs)
@@ -133,7 +133,8 @@ function main1(; doplot::Bool=true)
         transfer_heat!(kmc, tbt)
         bc!(kmc)
         if (kmc.t >= t_outs[idx])
-            @show iter, t_outs[idx], kmc.t, kmc.T
+            Tavg = sum(kmc.T) / length(kmc.T)
+            @show iter, t_outs[idx], kmc.t, Tavg
             if doplot
                 p = scatter!(xs, vec(kmc.T); label="\$t = $(t_outs[idx])\$, kMC")
                 p = plot!(xs, map(x -> analyt_T(x, t_outs[idx]), xs); label="\$t = $(t_outs[idx])\$, exact")
@@ -158,7 +159,7 @@ function main2(; maxiter=Inf, doplot::Bool=true)
     ℓ = 5.0    # cm
     a = 1.0    # cm/s^(1/2)
     h = 0.2    # cm
-    δT = 0.5   # K
+    δT = 0.3   # K
     xs = 0:h:ℓ
     ni = length(xs)
     nj = ni
@@ -188,7 +189,8 @@ function main2(; maxiter=Inf, doplot::Bool=true)
         transfer_heat!(kmc, tbt)
         bc!(kmc)
         if (kmc.t >= t_outs[idx])
-            @show iter, t_outs[idx], kmc.t, kmc.T
+            Tavg = sum(kmc.T) / length(kmc.T)
+            @show iter, t_outs[idx], kmc.t, Tavg
             if doplot
                 p = scatter(vec(Xs), vec(Ys), vec(kmc.T); label="\$t = $(t_outs[idx])\$, kMC")
                 zs = zeros(ni, nj);
@@ -199,11 +201,11 @@ function main2(; maxiter=Inf, doplot::Bool=true)
                 xlabel!(L"$x$")
                 ylabel!(L"$y$")
                 zlabel!(L"$T$")
-                idx += 1
                 println("Enter to continue...")
                 display(p)
                 readline()
             end
+            idx += 1
         end
         if time() - last_updated > 10
             Tavg = sum(kmc.T) / length(kmc.T)
@@ -238,5 +240,5 @@ if false # profile case 2
     readline()
 end
 
-@time main1()
-@time main2()
+@time main1(; doplot=false)
+@time main2(; doplot=false)
