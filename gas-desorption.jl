@@ -234,4 +234,6 @@ if false # profile case 1
     println("=================================================================")
 end
 
+println("My implementation of the heated desorption of a lattice gas, neglecting enthalpy change; section IV.A");
+println("===================================================================");
 @time main1(; doplot=true)

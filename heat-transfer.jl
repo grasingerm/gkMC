@@ -240,5 +240,8 @@ if false # profile case 2
     readline()
 end
 
+println("My implementation of the pure heat transfer models in section III.A");
+println("===================================================================");
+
 @time main1(; doplot=false)
 @time main2(; doplot=false)
