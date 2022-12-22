@@ -144,8 +144,8 @@ function main1(; maxiter::Int=Int(1.5*10^6), iterout::Int=100,
                  maxtime::Real=10^5, doplot::Bool=true)
     logA = log(10)                # log(ps^-1)
     @show EA = uconvert(Unitful.NoUnits, 10.8*10^3*u"J / mol" / _kB / _NA / 1u"K")  # 1 / K
-    ni = 101
-    nj = 12
+    ni = 1001
+    nj = 102
     a = sqrt(2.0)                 # nm/ps^(1/2)
     h = 2.0                       # nm
     ℓ = h*(ni-1)                  # nm
@@ -202,6 +202,10 @@ function main1(; maxiter::Int=Int(1.5*10^6), iterout::Int=100,
             @show iter, t, α, Tavg, iter/maxiter, t/maxtime
         end
     end
+
+    push!(t_series, kmc.t)
+    push!(T_series, sum(kmc.T) / length(kmc.T))
+    push!(α_series, sum(kmc.gas) / N_active_sites)
 
     if doplot
         p = plot(t_series, α_series)
