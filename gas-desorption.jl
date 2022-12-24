@@ -23,8 +23,10 @@ using PProf
     #σρ::Real
 end
 
-@everywhere struct PoissonTrans <: HeatTrans
-    a::Real
+@everywhere mutable struct PoissonTrans <: HeatTrans
+    τc::Real
+    const a::Real
+    const max_τc::Real
 end
 
 @everywhere Point = SVector{3, Float64};
@@ -67,12 +69,7 @@ end
     Idx(i, j, k)
 end
 
-function kmc_events(kmc::KineticMonteCarlo, tbt::ThermalBitTrans;
-                    active::Array{Bool, 3} = fill(true, size(kmc.T)))
-    events = []
-    c = tbt.a^2 / (kmc.h^2 * tbt.δT)
-    ni, nj, nk = size(kmc.T)
-    nn = ni*nj*nk
+function chunk_idx_ranges(nn::Int)
     np = nprocs()
     pp = round(Int, nn / np)
     idx_ranges = [( (i-1)*pp + 1):( i*pp ) for i=1:(np-1) ]
@@ -81,6 +78,16 @@ function kmc_events(kmc::KineticMonteCarlo, tbt::ThermalBitTrans;
     else
         push!(idx_ranges, 1:nn)
     end
+    return idx_ranges
+end
+
+function kmc_events(kmc::KineticMonteCarlo, tbt::ThermalBitTrans;
+                    active::Array{Bool, 3} = fill(true, size(kmc.T)))
+    events = []
+    c = tbt.a^2 / (kmc.h^2 * tbt.δT)
+    ni, nj, nk = size(kmc.T)
+    idx_ranges = chunk_idx_ranges(ni*nj*nk)
+    
     events = vcat(pmap(idx_range -> begin
         local_events = []
         for idx in idx_range
@@ -117,6 +124,37 @@ function kmc_events(kmc::KineticMonteCarlo, tbt::ThermalBitTrans;
     end, idx_ranges)... )
 end
 
+function kmc_events(kmc::KineticMonteCarlo, pht::PoissonTrans;
+                    active::Array{Bool, 3} = fill(true, size(kmc.T)))
+    events = []
+    ni, nj, nk = size(kmc.T)
+    idx_ranges = chunk_idx_ranges(ni*nj*nk)
+    
+    events = vcat(pmap(idx_range -> begin
+        local_events = []
+        for idx in idx_range
+            J = vidx_to_Idx(idx, ni, nj, nk)
+            ciJ = CartesianIndex(J)
+            @inbounds Tj = kmc.T[ciJ]
+            @inbounds if kmc.gas[ciJ]
+                push!(local_events, (
+                                     f=adsorp!, args=(J,), 
+                                     rate=exp(-kmc.EA/Tj + kmc.logA)
+                                    )
+                     )
+            end
+        end
+        local_events
+    end, idx_ranges)... )
+    if length(events) > 0
+        pht.τc = min(sum(map(event -> event.rate, events)), pht.max_τc) # adaptive time integration
+    end
+    push!(events, (f=transfer_heat!, args=(pht,), rate=1 / pht.τc))
+
+    return events
+end
+
+
 @everywhere function transfer_heat_fromto!(kmc::KineticMonteCarlo, 
                                            tbt::ThermalBitTrans,
                                            from::Idx, to::Idx)
@@ -124,12 +162,161 @@ end
     kmc.T[CartesianIndex(from)] -= tbt.δT
 end
 
+@everywhere function transfer_heat_3D!(kmc::KineticMonteCarlo, pht::PoissonTrans)
+    α = pht.a^2*pht.τc / (kmc.h^2)
+    ni, nj, nk = size(kmc.T)
+    new_T = zeros(ni, nj, nk)
+
+    idx_ranges = chunk_idx_ranges((ni-2)*(nj-2)*(nk*2))
+    new_inner_T = vcat(pmap(idx_range -> begin
+        local_T = map(idx -> begin
+            J = vidx_to_Idx(idx, ni-2, nj-2, nk-2) + Idx(1, 1, 1)
+            isum = -6*kmc.T[CartesianIndex(J)]
+            for nnbr in nnbrs
+                @inbounds isum += (kmc.T[CartesianIndex(J + nnbr)] + 
+                                   kmc.T[CartesianIndex(J - nnbr)] )
+            end
+            local_T[idx] = α*isum + kmc.T[CartesianIndex(J)]
+        end, idx_range)
+    end, idx_ranges)... )
+    new_T[2:end-1, 2:end-1, 2:end-1] = reshape(new_inner_T, ni-2, nj-2, nk-2)
+
+    for odim=1:3
+        idims = collect(1:3)
+        deleteat!(idims, odim)
+        for i=2:(size(kmc.T, idims[1])-1), j=2:(size(kmc.T, idims[2])-1)
+            K = i*nnbrs[idims[1]] + j*nnbrs[idims[2]] + nnbrs[odim]
+            nbr_sum = -3*kmc.T[CartesianIndex(K)]
+            for idim in idims
+                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
+                            kmc.T[CartesianIndex(K - nnbrs[idim])])
+            end
+            nbr_sum += (kmc.T[CartesianIndex(K + 2*nnbrs[odim])] -
+                        2*kmc.T[CartesianIndex(K + nnbrs[odim])])
+            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
+            
+            K = i*nnbrs[idims[1]] + j*nnbrs[idims[2]] + size(kmc.T, odim)*nnbrs[odim]
+            nbr_sum = -3*kmc.T[CartesianIndex(K)]
+            for idim in idims
+                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
+                            kmc.T[CartesianIndex(K - nnbrs[idim])])
+            end
+            nbr_sum += (kmc.T[CartesianIndex(K - 2*nnbrs[odim])] -
+                        2*kmc.T[CartesianIndex(K - nnbrs[odim])])
+            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
+        end
+    end
+
+    # Corners
+    for (i, isgn) in zip([1, ni], [1, -1]), (j, jsgn) in zip([1, nj], [1, -1]), (k, ksgn) in zip([1, nk], [1, -1])
+        new_T[i, j, k] = α*(kmc.T[i+2*isgn, j, k] - 2*kmc.T[i+isgn, j, k] + 
+                            kmc.T[i, j+2*jsgn, k] - 2*kmc.T[i, j+jsgn, k] +  
+                            kmc.T[i, j, k+2*ksgn] - 2*kmc.T[i, j, k+ksgn] +
+                            3*kmc.T[i, j, k]) + kmc.T[i, j, k]
+    end
+
+    kmc.T[:, :, :] = new_T[:, :, :]
+end
+
+@everywhere function transfer_heat_2D!(kmc::KineticMonteCarlo, pht::PoissonTrans)
+    α = pht.a^2*pht.τc / (kmc.h^2)
+    ni, nj, nk = size(kmc.T)
+    new_T = zeros(ni, nj, nk)
+
+    idx_ranges = chunk_idx_ranges((ni-2)*(nj-2))
+    new_inner_T = vcat(pmap(idx_range -> begin
+        local_T = map(idx -> begin
+            J = vidx_to_Idx(idx, ni-2, nj-2, 1) + Idx(1, 1, 0)
+            isum = -4*kmc.T[CartesianIndex(J)]
+            for nnbr in nnbrs[1:2]
+                @inbounds isum += (kmc.T[CartesianIndex(J + nnbr)] + 
+                                   kmc.T[CartesianIndex(J - nnbr)] )
+            end
+            α*isum + kmc.T[CartesianIndex(J)]
+        end, idx_range)
+    end, idx_ranges)... )
+    new_T[2:end-1, 2:end-1, 1] = reshape(new_inner_T, ni-2, nj-2, 1)
+
+    for odim=1:2
+        idims = collect(1:2)
+        deleteat!(idims, odim)
+        for i=2:(size(kmc.T, idims[1])-1)
+            K = i*nnbrs[idims[1]] + nnbrs[odim] + nnbrs[3]
+            nbr_sum = -kmc.T[CartesianIndex(K)]
+            for idim in idims
+                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
+                            kmc.T[CartesianIndex(K - nnbrs[idim])])
+            end
+            nbr_sum += (kmc.T[CartesianIndex(K + 2*nnbrs[odim])] -
+                        2*kmc.T[CartesianIndex(K + nnbrs[odim])])
+            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
+            
+            K = i*nnbrs[idims[1]] + size(kmc.T, odim)*nnbrs[odim] + nnbrs[3]
+            nbr_sum = -kmc.T[CartesianIndex(K)]
+            for idim in idims
+                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
+                            kmc.T[CartesianIndex(K - nnbrs[idim])])
+            end
+            nbr_sum += (kmc.T[CartesianIndex(K - 2*nnbrs[odim])] -
+                        2*kmc.T[CartesianIndex(K - nnbrs[odim])])
+            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
+        end
+    end
+
+    # Corners
+    for (i, isgn) in zip([1, ni], [1, -1]), (j, jsgn) in zip([1, nj], [1, -1])
+        new_T[i, j, 1] = α*(kmc.T[i+2*isgn, j, 1] - 2*kmc.T[i+isgn, j, 1] + 
+                             kmc.T[i, j+2*jsgn, 1] - 2*kmc.T[i, j+jsgn, 1] +  
+                             2*kmc.T[i, j, 1]) + kmc.T[i, j, 1]
+    end
+
+    kmc.T[:, :, :] = new_T[:, :, :]
+end
+
+@everywhere function transfer_heat_1D!(kmc::KineticMonteCarlo, pht::PoissonTrans)
+    α = pht.a^2*pht.τc / (kmc.h^2)
+    ni, nj, nk = size(kmc.T)
+    new_T = zeros(ni, nj, nk)
+
+    idx_ranges = chunk_idx_ranges((ni-2))
+    new_inner_T = vcat(pmap(idx_range -> begin
+        local_T = map(idx -> begin
+            J = vidx_to_Idx(idx, ni-2, 1, 1) + Idx(1, 0, 0)
+            isum = -2*kmc.T[CartesianIndex(J)]
+            nnbr = nnbrs[1]
+            isum += (kmc.T[CartesianIndex(J + nnbr)] + 
+                     kmc.T[CartesianIndex(J - nnbr)] )
+            α*isum + kmc.T[CartesianIndex(J)]
+        end, idx_range)
+    end, idx_ranges)... )
+    new_T[2:(ni-1), 1, 1] = reshape(new_inner_T, ni-2, 1, 1)
+
+    new_T[1, 1, 1] = (α*(kmc.T[3, 1, 1] - 2*kmc.T[2, 1, 1] + kmc.T[1, 1, 1]) +
+                      kmc.T[1, 1, 1])
+    new_T[ni, 1, 1] = (α*(kmc.T[ni-2, 1, 1] - 2*kmc.T[ni-1, 1, 1] + kmc.T[ni, 1, 1]) +
+                       kmc.T[ni, 1, 1])
+
+    kmc.T[:, :, :] = new_T[:, :, :]
+end
+
+@everywhere function transfer_heat!(kmc::KineticMonteCarlo, pht::PoissonTrans)
+    ni, nj, nk = size(kmc.T)
+
+    if (minimum(size(kmc.T)) > 2)
+        transfer_heat_3D!(kmc, pht)
+    elseif (size(kmc.T, 2) > 2) 
+        transfer_heat_2D!(kmc, pht)
+    else
+        transfer_heat_1D!(kmc, pht)
+    end
+end
+
 @everywhere function adsorp!(kmc::KineticMonteCarlo, J::Idx)
     kmc.gas[CartesianIndex(J)] = false
 end
 
-function do_event!(kmc::KineticMonteCarlo, tbt::ThermalBitTrans)
-    events = kmc_events(kmc, tbt)
+function do_event!(kmc::KineticMonteCarlo, ht::HeatTrans)
+    events = kmc_events(kmc, ht)
     rate_cumsum = cumsum(map(event -> event.rate, events))
     choice_dec = rand()*rate_cumsum[end]
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
@@ -225,6 +412,101 @@ function main1(; maxiter::Int=Int(1.5*10^6), iterout::Int=100,
     kmc, tbt
 end
 
+function main2(; maxiter::Int=Int(1e7), iterout::Int=100, 
+                 iterplot::Int=(2*maxiter),
+                 maxtime::Real=1e5, doplot::Bool=true)
+    logA = log(10)                # log(ps^-1)
+    @show EA = uconvert(Unitful.NoUnits, 10.8*10^3*u"J / mol" / _kB / _NA / 1u"K")  # 1 / K
+    ni = 1001
+    nj = 16
+    a = sqrt(2.0)                 # nm/ps^(1/2)
+    h = 2.0                       # nm
+    ℓ = h*(ni-1)                  # nm
+    d = h*(nj-1)                  # nm
+    δT = 0.2                      # K
+    xs = 0:h:ℓ
+    ys = 0:h:d
+    T0 = 100.0                    # K
+    Tb = 110.0                    # K
+    τc = 1e-1
+    max_τc = τc
+
+    pht = PoissonTrans(a, τc, max_τc)
+    kmc = KineticMonteCarlo(Point(ℓ, d, 0.0), logA, EA, h; T0=T0)
+    kmc.gas[:, 1:5, 1] .= false
+    kmc.T[:, 1:5, 1] .= Tb
+    @show size(kmc.T)
+    @show N_active_sites = sum(kmc.gas)
+
+    bc!(kmc::KineticMonteCarlo) = (
+                                   kmc.T[:, 1, :] .= Tb; 
+                                   kmc.T[1, 1:5, :] .= Tb; 
+                                   kmc.T[end, 1:5, :] .= Tb; 
+                                  )
+    bc!(kmc)
+
+    t_series = [];
+    T_series = [];
+    α_series = [];
+
+    bc!(kmc)
+    idx = 1
+    iter = 0
+    last_update = time()
+
+    while (kmc.t <= maxtime && iter <= maxiter)
+        iter += 1
+        do_event!(kmc, pht)
+        bc!(kmc)
+        if (iter % iterout == 0)
+            push!(t_series, kmc.t)
+            push!(T_series, sum(kmc.T) / length(kmc.T))
+            push!(α_series, sum(kmc.gas) / N_active_sites)
+        end
+        if (iter % iterplot == 0)
+            p = heatmap(kmc.T[:, :, 1])
+            title!("Temperature")
+            println("Enter to quit")
+            display(p)
+            readline()
+            p = heatmap(kmc.gas[:, :, 1])
+            title!("Gas")
+            println("Enter to quit")
+            display(p)
+            readline()
+        end
+        if (time() - last_update > 15)
+            last_update = time()
+            t = kmc.t
+            Tavg = sum(kmc.T) / length(kmc.T)
+            α = sum(kmc.gas) / N_active_sites
+            @show iter, t, α, Tavg, pht.τc, iter/maxiter, t/maxtime
+        end
+    end
+
+    push!(t_series, kmc.t)
+    push!(T_series, sum(kmc.T) / length(kmc.T))
+    push!(α_series, sum(kmc.gas) / N_active_sites)
+
+    if doplot
+        p = plot(t_series, α_series)
+        xlabel!("time")
+        ylabel!("gas %")
+        println("Enter to quit")
+        display(p)
+        readline()
+        p = plot(t_series, T_series)
+        xlabel!("time")
+        ylabel!("avg T")
+        println("Enter to quit")
+        display(p)
+        readline()
+    end
+
+    kmc, pht
+end
+
+
 if false # profile case 1
     Profile.clear()
     @time main1(; doplot=false)
@@ -240,4 +522,5 @@ end
 
 println("My implementation of the heated desorption of a lattice gas, neglecting enthalpy change; section IV.A");
 println("===================================================================");
-@time main1(; doplot=true)
+#@time main1(; doplot=true)
+@time main2(; doplot=true)

@@ -465,9 +465,6 @@ function main4(; maxiter=Inf, doplot::Bool=true)
         if (kmc.t >= t_outs[idx])
             Tavg = sum(kmc.T) / length(kmc.T)
             @show iter, t_outs[idx], kmc.t, Tavg
-            println("T = ")
-            show(stdout, "text/plain", kmc.T)
-            println()
             if doplot
                 p = scatter(vec(Xs[2:end-1,2:end-1]), vec(Ys[2:end-1,2:end-1]), vec(kmc.T[2:end-1,2:end-1]); label="\$t = $(t_outs[idx])\$, kMC")
                 zs = zeros(ni, nj);
@@ -546,6 +543,6 @@ println("1D thermal bit transfer...");
 println("2D thermal bit transfer...");
 @time main2(; doplot=true)
 println("1D Poisson heat transfer...");
-@time main3(; doplot=true)
+@time main3(; doplot=false)
 println("2D Poisson heat transfer...");
-@time main4(; doplot=true)
+@time main4(; doplot=false)
