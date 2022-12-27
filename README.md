@@ -11,6 +11,9 @@ The pure heat transfer problems outlined in section III.A are implemented in ``h
 
 ## Heated desorption of a lattice gas
 
-The next examples involve the heated desorption of a lattice gas (section IV.A).
-The first example neglects the enthalpy change from desorption and is implemented in ``gas-desorption.jl``.
-It appears to agree with Fig 4.
+The next example involve the heated desorption of a lattice gas (section IV).
+The model is implemented in ``gas-desorption.jl``.
+When the enthalpy change is neglected (command line argument ``--dT``), the simulation appears to agree with Fig 4.
+To see other arguments, run
+
+    julia gas-desorption.jl --help
