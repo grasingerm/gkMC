@@ -3,11 +3,33 @@ using Distributed
 @everywhere import Base.CartesianIndex
 @everywhere import PhysicalConstants
 @everywhere using Unitful
+using ArgParse;
 using Plots; pyplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile
 using PProf
+
+s = ArgParseSettings();
+@add_arg_table! s begin
+  "--dT", "-d"
+    help = "change in temperature due to desorption"
+    arg_type = Float64
+    default = 0.0
+  "--diff", "-a"
+    help = "thermal diffusivity"
+    arg_type = Float64
+    default = sqrt(2.0)
+  "--figname"
+    help = "figure name"
+    arg_type = String
+    default = "graph"
+  "--showplot"
+    help = "show plots"
+    action = :store_true
+end
+
+pargs = parse_args(s);
 
 @everywhere const _kB = PhysicalConstants.CODATA2018.BoltzmannConstant
 @everywhere const _NA = PhysicalConstants.CODATA2018.AvogadroConstant
@@ -37,15 +59,19 @@ end
     gas::Array{Bool, 3}
     const logA::Real
     const EA::Real
+    const ΔT::Real
     const h::Real
     const offset::Point
 end
 
 @everywhere function KineticMonteCarlo(dims::Point, logA::Real, EA::Real, h::Real; 
-                           T0::Real = 0.0, offset::Point=Point(0.0, 0.0, 0.0))
+                                       T0::Real = 0.0, 
+                                       offset::Point=Point(0.0, 0.0, 0.0),
+                                       ΔT::Real = 0.0
+                                      )
     ni, nj, nk = map(i -> length(0.0:h:dims[i]), 1:3)
     ret = KineticMonteCarlo(0.0, fill(T0, ni, nj, nk), fill(true, ni, nj, nk), 
-                            logA, EA, h, offset)
+                            logA, EA, ΔT, h, offset)
     ret.gas[:, 1, 1] .= false;
     return ret;
 end
@@ -313,6 +339,7 @@ end
 
 @everywhere function adsorp!(kmc::KineticMonteCarlo, J::Idx)
     kmc.gas[CartesianIndex(J)] = false
+    kmc.T[CartesianIndex(J)] -= kmc.ΔT
 end
 
 function do_event!(kmc::KineticMonteCarlo, ht::HeatTrans)
@@ -414,12 +441,15 @@ end
 
 function main2(; maxiter::Int=Int(1e7), iterout::Int=100, 
                  iterplot::Int=(2*maxiter),
-                 maxtime::Real=1e5, doplot::Bool=true)
-    logA = log(10)                # log(ps^-1)
+                 maxtime::Real=1e5, doplot::Bool=true, showplot::Bool=false,
+                 figname::String="graph",
+                 ΔT::Real=0.0,
+                 A::Real=10.0, 
+                 a::Real=1.0)
+    logA = log(A)                # log(ps^-1)
     @show EA = uconvert(Unitful.NoUnits, 10.8*10^3*u"J / mol" / _kB / _NA / 1u"K")  # 1 / K
-    ni = 1001
-    nj = 16
-    a = sqrt(2.0)                 # nm/ps^(1/2)
+    ni = 101
+    nj = 102
     h = 2.0                       # nm
     ℓ = h*(ni-1)                  # nm
     d = h*(nj-1)                  # nm
@@ -430,18 +460,19 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     Tb = 110.0                    # K
     τc = 1e-1
     max_τc = τc
+    jbed = 1
 
     pht = PoissonTrans(a, τc, max_τc)
-    kmc = KineticMonteCarlo(Point(ℓ, d, 0.0), logA, EA, h; T0=T0)
-    kmc.gas[:, 1:5, 1] .= false
-    kmc.T[:, 1:5, 1] .= Tb
+    kmc = KineticMonteCarlo(Point(ℓ, d, 0.0), logA, EA, h; T0=T0, ΔT=ΔT)
+    kmc.gas[:, 1:jbed, 1] .= false
+    kmc.T[:, 1:jbed, 1] .= Tb
     @show size(kmc.T)
     @show N_active_sites = sum(kmc.gas)
 
     bc!(kmc::KineticMonteCarlo) = (
                                    kmc.T[:, 1, :] .= Tb; 
-                                   kmc.T[1, 1:5, :] .= Tb; 
-                                   kmc.T[end, 1:5, :] .= Tb; 
+                                   kmc.T[1, 1:jbed, :] .= Tb; 
+                                   kmc.T[end, 1:jbed, :] .= Tb; 
                                   )
     bc!(kmc)
 
@@ -466,14 +497,20 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
         if (iter % iterplot == 0)
             p = heatmap(kmc.T[:, :, 1])
             title!("Temperature")
-            println("Enter to quit")
-            display(p)
-            readline()
+            savefig(figname*"_temp-$iter.pdf")
+            if showplot
+                println("Enter to quit")
+                display(p)
+                readline()
+            end
             p = heatmap(kmc.gas[:, :, 1])
             title!("Gas")
-            println("Enter to quit")
-            display(p)
-            readline()
+            savefig(figname*"_gas-$iter.pdf")
+            if showplot
+                println("Enter to quit")
+                display(p)
+                readline()
+            end
         end
         if (time() - last_update > 15)
             last_update = time()
@@ -489,23 +526,33 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     push!(α_series, sum(kmc.gas) / N_active_sites)
 
     if doplot
-        p = plot(t_series, α_series)
+        kD0 = A*exp(-EA/(kB*T0))
+        kDb = A*exp(-EA/(kB*Tb))
+        Cb = α_series[end]*exp(kDb*t_series[end])
+        p = plot(t_series, α_series; label="kMC")
+        plot!(t_series, map(t -> exp(-kD0*t), t_series); label="const. \$T = 100K\$")
+        plot!(t_series, map(t -> Cb*exp(-kDb*t), t_series); label="const. \$T = 110K\$")
         xlabel!("time")
         ylabel!("gas %")
-        println("Enter to quit")
-        display(p)
-        readline()
+        savefig(figname*"_gas.pdf")
+        if showplot
+            println("Enter to quit")
+            display(p)
+            readline()
+        end
         p = plot(t_series, T_series)
         xlabel!("time")
         ylabel!("avg T")
-        println("Enter to quit")
-        display(p)
-        readline()
+        savefig(figname*"_temp.pdf")
+        if showplot
+            println("Enter to quit")
+            display(p)
+            readline()
+        end
     end
 
     kmc, pht
 end
-
 
 if false # profile case 1
     Profile.clear()
@@ -520,7 +567,8 @@ if false # profile case 1
     println("=================================================================")
 end
 
-println("My implementation of the heated desorption of a lattice gas, neglecting enthalpy change; section IV.A");
+println("My implementation of the heated desorption of a lattice gas; section IV");
 println("===================================================================");
 #@time main1(; doplot=true)
-@time main2(; doplot=true)
+@time main2(; doplot=true, a=pargs["diff"], figname=pargs["figname"], 
+            ΔT=pargs["dT"])
