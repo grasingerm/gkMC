@@ -9,6 +9,7 @@ using LaTeXStrings
 using SpecialFunctions
 using Profile
 using PProf
+using DelimitedFiles
 
 s = ArgParseSettings();
 @add_arg_table! s begin
@@ -20,6 +21,14 @@ s = ArgParseSettings();
     help = "thermal diffusivity"
     arg_type = Float64
     default = sqrt(2.0)
+  "--maxiter", "-m"
+    help = "maximum number of iterations"
+    arg_type = Int
+    default = convert(Int, 1e7)
+  "--maxtime", "-t"
+    help = "maximum simulation time"
+    arg_type = Float64
+    default = 1e5
   "--figname"
     help = "figure name"
     arg_type = String
@@ -485,6 +494,10 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     iter = 0
     last_update = time()
 
+    push!(t_series, kmc.t)
+    push!(T_series, sum(kmc.T) / length(kmc.T))
+    push!(α_series, sum(kmc.gas) / N_active_sites)
+
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
         do_event!(kmc, pht)
@@ -526,14 +539,15 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     push!(α_series, sum(kmc.gas) / N_active_sites)
 
     if doplot
-        kD0 = A*exp(-EA/(kB*T0))
-        kDb = A*exp(-EA/(kB*Tb))
+        kD0 = A*exp(-EA/T0)
+        kDb = A*exp(-EA/Tb)
         Cb = α_series[end]*exp(kDb*t_series[end])
         p = plot(t_series, α_series; label="kMC")
         plot!(t_series, map(t -> exp(-kD0*t), t_series); label="const. \$T = 100K\$")
         plot!(t_series, map(t -> Cb*exp(-kDb*t), t_series); label="const. \$T = 110K\$")
         xlabel!("time")
         ylabel!("gas %")
+        ylims!(0.0, 1.0)
         savefig(figname*"_gas.pdf")
         if showplot
             println("Enter to quit")
@@ -549,6 +563,7 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
             display(p)
             readline()
         end
+        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series))
     end
 
     kmc, pht
@@ -571,4 +586,4 @@ println("My implementation of the heated desorption of a lattice gas; section IV
 println("===================================================================");
 #@time main1(; doplot=true)
 @time main2(; doplot=true, a=pargs["diff"], figname=pargs["figname"], 
-            ΔT=pargs["dT"])
+            ΔT=pargs["dT"], maxiter=pargs["maxiter"], maxtime=pargs["maxtime"])
