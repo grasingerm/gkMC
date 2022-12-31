@@ -54,7 +54,7 @@ function main2(; maxiter=Inf, doplot::Bool=true)
     th = 1.0   # cm
     ℓ = 5.0    # cm
     a = 1.0    # cm/s^(1/2)
-    h = 0.01    # cm
+    h = 0.05    # cm
     δT = 0.3   # K
     xs = 0:h:ℓ
     ni = length(xs)
@@ -127,4 +127,4 @@ println("using ParallelStencil")
 println("===================================================================");
 
 println("2D heat transfer using ParallelStencil.jl...");
-@time main2(; doplot=false)
+@time main2(; doplot=true)

@@ -256,7 +256,6 @@ end
 @everywhere function transfer_heat_2D!(kmc::KineticMonteCarlo, pht::PoissonTrans)
     α = pht.a^2*pht.τc / (kmc.h^2)
     ni, nj, nk = size(kmc.T)
-    new_T = zeros(ni, nj, nk)
 
     idx_ranges = chunk_idx_ranges((ni-2)*(nj-2))
     new_inner_T = vcat(pmap(idx_range -> begin
@@ -270,42 +269,8 @@ end
             α*isum + kmc.T[CartesianIndex(J)]
         end, idx_range)
     end, idx_ranges)... )
-    new_T[2:end-1, 2:end-1, 1] = reshape(new_inner_T, ni-2, nj-2, 1)
 
-    for odim=1:2
-        idims = collect(1:2)
-        deleteat!(idims, odim)
-        for i=2:(size(kmc.T, idims[1])-1)
-            K = i*nnbrs[idims[1]] + nnbrs[odim] + nnbrs[3]
-            nbr_sum = -kmc.T[CartesianIndex(K)]
-            for idim in idims
-                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
-                            kmc.T[CartesianIndex(K - nnbrs[idim])])
-            end
-            nbr_sum += (kmc.T[CartesianIndex(K + 2*nnbrs[odim])] -
-                        2*kmc.T[CartesianIndex(K + nnbrs[odim])])
-            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
-            
-            K = i*nnbrs[idims[1]] + size(kmc.T, odim)*nnbrs[odim] + nnbrs[3]
-            nbr_sum = -kmc.T[CartesianIndex(K)]
-            for idim in idims
-                nbr_sum += (kmc.T[CartesianIndex(K + nnbrs[idim])] + 
-                            kmc.T[CartesianIndex(K - nnbrs[idim])])
-            end
-            nbr_sum += (kmc.T[CartesianIndex(K - 2*nnbrs[odim])] -
-                        2*kmc.T[CartesianIndex(K - nnbrs[odim])])
-            new_T[CartesianIndex(K)] = α*nbr_sum + kmc.T[CartesianIndex(K)]
-        end
-    end
-
-    # Corners
-    for (i, isgn) in zip([1, ni], [1, -1]), (j, jsgn) in zip([1, nj], [1, -1])
-        new_T[i, j, 1] = α*(kmc.T[i+2*isgn, j, 1] - 2*kmc.T[i+isgn, j, 1] + 
-                             kmc.T[i, j+2*jsgn, 1] - 2*kmc.T[i, j+jsgn, 1] +  
-                             2*kmc.T[i, j, 1]) + kmc.T[i, j, 1]
-    end
-
-    kmc.T[:, :, :] = new_T[:, :, :]
+    kmc.T[2:end-1, 2:end-1, :] = reshape(new_inner_T, ni-2, nj-2, 1)
 end
 
 @everywhere function transfer_heat_1D!(kmc::KineticMonteCarlo, pht::PoissonTrans)
@@ -479,9 +444,12 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     @show N_active_sites = sum(kmc.gas)
 
     bc!(kmc::KineticMonteCarlo) = (
+                                   kmc.T[:, end, 1] = kmc.T[:, end-1, 1];
+                                   kmc.T[1, :, 1] = kmc.T[2, :, 1];
+                                   kmc.T[end, :, 1] = kmc.T[end-1, :, 1];
                                    kmc.T[:, 1, :] .= Tb; 
                                    kmc.T[1, 1:jbed, :] .= Tb; 
-                                   kmc.T[end, 1:jbed, :] .= Tb; 
+                                   kmc.T[end, 1:jbed, :] .= Tb;
                                   )
     bc!(kmc)
 
