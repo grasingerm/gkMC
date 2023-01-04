@@ -17,3 +17,9 @@ When the enthalpy change is neglected (command line argument ``--dT``), the simu
 To see other arguments, run
 
     julia gas-desorption.jl --help
+
+## ParallelStencil.jl
+
+``ParallelStencil.jl`` is a julia package which can be used for highly efficient, parallel simulation of heat transfer.
+I have used it in ``heat-transfer-parallel-stencil.jl`` and ``gas-desorption-ps.jl``.
+Both simulations appear to be orders of magnitude faster than their analogs.
