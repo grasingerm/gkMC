@@ -9,9 +9,6 @@ using SpecialFunctions
 using Profile
 using PProf
 using DelimitedFiles
-using OrdinaryDiffEq
-using Distributions
-using Sundials
 
 const USE_GPU = false
 import MPI
@@ -23,8 +20,8 @@ else
     @init_parallel_stencil(Threads, Float64, 2);
 end
 
-@parallel function diffusion2D_step!(dT, T, Ci, lam, _dx, _dy)
-    @inn(dT) = lam*@inn(Ci)*(@d2_xi(T)*_dx^2 + @d2_yi(T)*_dy^2);
+@parallel function diffusion2D_step!(T2, T, Ci, lam, dt, _dx, _dy)
+    @inn(T2) = @inn(T) + dt*(lam*@inn(Ci)*(@d2_xi(T)*_dx^2 + @d2_yi(T)*_dy^2));
     return
 end
 
@@ -38,22 +35,6 @@ s = ArgParseSettings();
     help = "thermal diffusivity"
     arg_type = Float64
     default = sqrt(2.0)
-  "--nx"
-    help = "lattice sites in the x-direction"
-    arg_type = Int
-    default = 1001
-  "--ny"
-    help = "lattice sites in the y-direction"
-    arg_type = Int
-    default = 103
-  "--jbed"
-    help = "lattice sites of heat bath"
-    arg_type = Int
-    default = 2
-  "--max-dt"
-    help = "maximum time step"
-    arg_type = Float64
-    default = Inf
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
@@ -109,21 +90,9 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                       T, Ci, lam, dx, ℓx, dy, ℓy)
 end
 
-function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
-    prob = ODEProblem((dT, T, p, t) -> begin
-        @parallel diffusion2D_step!(dT, kmc.T, kmc.Ci, kmc.lam, 1/kmc.dx, 1/kmc.dy)
-        bc!(kmc.T)
-    end, kmc.T, (0.0, kmc.dt))
-    sol = solve(prob, ROCK4(), save_everystep=false, save_start=false)
-                #reltol=1e-8, abstol=1e-8)
-    #sol = solve(prob, CVODE_BDF(linear_solver=:GMRES))
-    kmc.T = sol[end]
-    bc!(kmc.T)
-end
-
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.gas)
-    nevents = ni*nj+1
+    nevents = ni*nj
     event_handlers = Array{Tuple{Function, Tuple}}(undef, nevents)
     rates = zeros(nevents)
 
@@ -136,12 +105,6 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
             end
         end
     end
-    #@assert !(0.0 in rates[1:end-1]) "rates = $rates, findnext(x -> x == 0.0, rates, 1) = $(findnext(x -> x == 0.0, rates, 1))"
-
-    total_gas_rate = sum(rates)
-    kmc.dt = min(kmc.max_dt, 1 / total_gas_rate) # variable time integration
-    rates[end] = 1/kmc.dt
-    event_handlers[end] = (transfer_heat!, (bc!,))
 
     (rates=rates, event_handlers=event_handlers)
 end
@@ -149,43 +112,18 @@ end
 function adsorp!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert kmc.gas[i, j]
     kmc.gas[i, j] = false
-    kmc.T[i, j] -= kmc.ΔT
+    kmc.T[i, j] += kmc.ΔT
 end
 
 function do_event!(kmc::KineticMonteCarlo, bc!)
     events = kmc_events(kmc, bc!)
-    #println("events = "); display(events)
     rate_cumsum = cumsum(events.rates)
-    #println("rate_cumsum = "); display(rate_cumsum)
-    choice_dec = rand(Uniform(0, rate_cumsum[end]))
+    choice_dec = rand()*rate_cumsum[end]
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
     f, args = events.event_handlers[choice_idx]
     f(kmc, args...)
     Δt = -log(rand()) / rate_cumsum[end]
     kmc.t += Δt
-    #println("T = "); display(kmc.T)
-    #println("======================")
-end
-
-@parallel_indices (ix, iy) function bc_outer!(T)
-    T[ix, 1] = T[ix, 2]
-    T[ix, end] = T[ix, end-1]
-    T[1, iy] = T[2, iy]
-    T[end, iy] = T[end-1, iy]
-    return
-end
-
-@parallel_indices (ix, iy) function bc_bed!(T, Tb, jbed)
-    T[ix, 1] = Tb
-    T[ix, jbed] = Tb
-    T[1, iy] = Tb
-    T[end, iy] = Tb
-    return
-end
-
-function bc_p!(T, Tb, jbed)
-    @parallel (1:size(T,1), 1:size(T,2)) bc_outer!(T)
-    @parallel (1:size(T,1), 1:jbed) bc_bed!(T, Tb, jbed)
 end
 
 function main2(; maxiter::Int=Int(1e7), iterout::Int=100, 
@@ -194,10 +132,10 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
                  figname::String="graph",
                  ΔT::Real=0.0,
                  A::Real=10.0, 
-                 a::Real=1.0, ni::Int=1001, nj::Int=103, jbed::Int=2, 
-                 max_τc::Float64=Inf)
-    
+                 a::Real=1.0)
     @show EA = uconvert(Unitful.NoUnits, 10.8*10^3*u"J / mol" / _kB / _NA / 1u"K")  # 1 / K
+    ni = 1001
+    nj = 102
     h = 2.0                       # nm
     ℓ = h*(ni-1)                  # nm
     d = h*(nj-1)                  # nm
@@ -206,13 +144,23 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
     ys = 0:h:d
     T0 = 100.0                    # K
     Tb = 110.0                    # K
-    τc = 1e-0
+    τc = 1e-1
+    max_τc = τc
+    jbed = 1
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, τc, max_τc, A, EA, ΔT, 
                             a, 1.0, jbed, T0, Tb)
     N_active_sites = sum(kmc.gas)
+    T2 = @zeros(ni, nj)
+    T2[:, :] = kmc.T[:, :]
 
-    bc_curry!(T) = bc_p!(T, Tb, jbed)
+    bc!(T) = (
+               T[:, end] = T[:, end-1];
+               T[1, :] = T[2, :];
+               T[end, :] = T[end-1, :];
+               T[:, 1:jbed] .= Tb; 
+              )
+    bc!(kmc.T)
 
     t_series = [];
     T_series = [];
@@ -228,7 +176,7 @@ function main2(; maxiter::Int=Int(1e7), iterout::Int=100,
 
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
-        do_event!(kmc, bc_curry!)
+        do_event!(kmc, bc!)
         if (iter % iterout == 0)
             push!(t_series, kmc.t)
             push!(T_series, sum(kmc.T) / length(kmc.T))
@@ -315,7 +263,4 @@ println("Heated desorption of a lattice gas implemented with ParallelStencil; se
 println("===================================================================");
 #@time main1(; doplot=true)
 @time main2(; doplot=true, a=pargs["diff"], figname=pargs["figname"], 
-            ΔT=pargs["dT"], maxiter=pargs["maxiter"], maxtime=pargs["maxtime"],
-            ni=pargs["nx"], nj=pargs["ny"], jbed=pargs["jbed"],
-            max_τc=pargs["max-dt"]
-           )
+            ΔT=pargs["dT"], maxiter=pargs["maxiter"], maxtime=pargs["maxtime"])

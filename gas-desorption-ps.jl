@@ -94,8 +94,6 @@ function transfer_heat!(kmc::KineticMonteCarlo, T2, bc!::Function)
     @parallel diffusion2D_step!(T2, kmc.T, kmc.Ci, kmc.lam, kmc.dt, 1/kmc.dx, 1/kmc.dy)
     bc!(T2)
     kmc.T, T2 = T2, kmc.T
-    Δt = -log(rand()) * kmc.dt
-    kmc.t += Δt
 end
 
 function kmc_events(kmc::KineticMonteCarlo, T2, bc!::Function)
