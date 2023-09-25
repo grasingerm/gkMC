@@ -86,6 +86,14 @@ s = ArgParseSettings();
     help = "air layer thickness"
     arg_type = Int
     default = 30
+  "--i0"
+    help = "initial filament"
+    arg_type = Int
+    default = 30
+  "--v0"
+    help = "printer head velocity"
+    arg_type = Float64
+    default = 301.0 / (1e7)
   "--max-dt"
     help = "maximum time step"
     arg_type = Float64
@@ -144,31 +152,34 @@ mutable struct KineticMonteCarlo
     ℓx::Float64
     dy::Float64
     ℓy::Float64
+    ihead::Int
+    i0::Int
+    T0::Float64
+    v0::Float64
+    jbed::Int
+    jair::Int
+    C0::Float64
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, dt::Real, max_dt::Real, 
                            A::Real, EA::Real, Tc::Real, ΔT::Real, lam::Real, 
                            Cbed::Real, C0::Real, Cair::Real,
-                           Tbed::Real, T0::Real, Tair::Real)
+                           Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
     active = fill(false, ni, nj)
-    active[:, jbed+1:end-jair] .= true
+    active[1:i0, jbed+1:end-jair] .= true
     T = @zeros(ni, nj)
     T[:, 1:jbed] .= Tbed
-    T[:, (jbed+1):(end-jair-1)] .= T0
-    if jair != 0
-        T[:, (end-jair):end] .= Tair
-    end
+    T[:, (jbed+1):end] .= Tair
+    T[1:i0, (jbed+1):(end-jair)] .= T0
     Ci = @zeros(ni, nj)
     Ci[:, 1:jbed] .= Cbed
-    Ci[:, jbed+1:end-jair] .= C0
-    if jair != 0
-        Ci[:, (end-jair):end] .= Cair
-    end
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active,
-                      A, EA, Tc, ΔT, T, Ci, lam, dx, ℓx, dy, ℓy)
+    Ci[:, (jbed+1):end] .= Cair
+    Ci[1:i0, (jbed+1):(end-jair)] .= C0
+    KineticMonteCarlo(0.0, dt, max_dt, χ, active, A, EA, Tc, ΔT, T, Ci, lam, 
+                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, C0)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
@@ -185,19 +196,20 @@ end
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
-    nevents = sum(kmc.active)+1
-    event_handlers = []
-    rates = Float64[]
+    nevents = ni*nj + 1
+    event_handlers = Vector{Any}(undef, nevents)
+    rates = zeros(nevents)
 
     for j=1:nj
         Threads.@threads for i=1:ni
             if !kmc.active[i, j]; continue; end
+            idx = (j-1)*ni + i
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
-                push!(rates, kmc.A*exp(-kmc.EA/(kmc.Tc - kmc.T[i, j])))
-                push!(event_handlers, (crystallize!, (i, j)))
+                rates[idx] = kmc.A*exp(-kmc.EA/(kmc.Tc - kmc.T[i, j]))
+                event_handlers[idx] = (crystallize!, (i, j))
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
-                push!(rates, kmc.A*exp(-kmc.EA/(kmc.T[i, j] - kmc.Tc)))
-                push!(event_handlers, (melt!, (i, j)))
+                rates[idx] = kmc.A*exp(-kmc.EA/(kmc.T[i, j] - kmc.Tc))
+                event_handlers[idx] = (melt!, (i, j))
             end
         end
     end
@@ -223,6 +235,12 @@ function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
     kmc.T[i, j] -= kmc.ΔT
 end
 
+function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
+    kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    kmc.Ci[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.C0
+    kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
+end
+
 function do_event!(kmc::KineticMonteCarlo, bc!)
     events = kmc_events(kmc, bc!)
     rate_cumsum = cumsum(events.rates)
@@ -232,8 +250,10 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
     f(kmc, args...)
     Δt = -log(rand()) / rate_cumsum[end]
     kmc.t += Δt
-    #println("T = "); display(kmc.T)
-    #println("======================")
+    new_ihead = round(Int, kmc.v0*kmc.t) + kmc.i0
+    if new_ihead <= size(kmc.T, 1) && new_ihead > kmc.ihead
+        deposit!(kmc, (kmc.ihead+1):new_ihead)
+    end
 end
 
 @parallel_indices (i) function bc_top_neumann!(T)
@@ -286,6 +306,8 @@ function main2(pargs)
     nj = pargs["nj"]
     jbed = pargs["jbed"]
     jair = pargs["jair"]
+    i0 = pargs["i0"]
+    v0 = pargs["v0"]
     maxdt = pargs["max-dt"]
     h = 2.0                       # nm
     ℓ = h*(ni-1)                  # nm
@@ -297,7 +319,7 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
-                            lam, Cbed, C0, Cair, Tbed, T0, Tair)
+                            lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0)
     N_active_sites = sum(kmc.active)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
