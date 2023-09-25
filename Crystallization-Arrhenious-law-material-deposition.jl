@@ -4,7 +4,11 @@ import PhysicalConstants
 using Unitful
 using ArgParse;
 using Plots;
+<<<<<<< HEAD
 #pyplot();
+=======
+pyplot();
+>>>>>>> d615241777cff3f1711c6f70b772c93a0c91922b
 using LaTeXStrings
 using SpecialFunctions
 using Profile
@@ -12,7 +16,11 @@ using PProf
 using DelimitedFiles
 using OrdinaryDiffEq
 using Distributions
+<<<<<<< HEAD
 using Sundials
+=======
+#using Sundials
+>>>>>>> d615241777cff3f1711c6f70b772c93a0c91922b
 
 const USE_GPU = false
 import MPI
@@ -171,10 +179,17 @@ function do_event!(kmc::KineticMonteCarlo, bc!, T_mat, α_mat)  #
     kmc.t += Δt
 
     dx = round(Int, kmc.dt * kmc.v)
+<<<<<<< HEAD
     for j = (kmc.air+1):(kmc.air+kmc.nj), i = (kmc.bed+kmc.ni):(kmc.bed+kmc.ni+dx)
         deposit_material!(kmc, T_mat, α_mat, i, j)
     end 
     @show kmc.ni = kmc.ni + dx
+=======
+    kmc.ni = kmc.ni + dx
+    for j = (kmc.bed+1):(kmc.bed+kmc.nj), i = (kmc.air+1):(kmc.air+kmc.ni)
+        deposit_material!(kmc, T_mat, α_mat, i, j)
+    end 
+>>>>>>> d615241777cff3f1711c6f70b772c93a0c91922b
 end
 
 @parallel_indices (ix, iy) function bc_bed!(T, T_bed, bed)
