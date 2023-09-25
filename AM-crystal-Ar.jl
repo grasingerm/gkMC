@@ -261,8 +261,20 @@ end
     return
 end
 
+@parallel_indices (i) function bc_horizontal_neumann!(T, dT, j, dj)
+    @assert(abs(dj) == 1, "absolute j component of normal vector must be 1")
+    T[i, j] = T[i, j-dj] - dT
+    return
+end
+
 @parallel_indices (i) function bc_horizontal_dirichlet!(T, T0, j)
     T[i, j] = T0
+    return
+end
+
+@parallel_indices (j) function bc_vertical_neumann!(T, dT, i, di)
+    @assert(abs(di) == 1, "absolute i component of normal vector must be 1")
+    T[i, j] = T[i-di, j] - dT
     return
 end
 
@@ -278,13 +290,18 @@ end
 end
 
 function bc_p!(T, Tb, jbedbot, jbedtop, Tair, jair)
-    @parallel (1:size(T,2)) bc_periodic!(T)
-    @parallel (1:size(T,1)) bc_horizontal_dirichlet!(T, Tb, jbedbot)
-    @parallel (1:size(T,1)) bc_horizontal_dirichlet!(T, Tb, jbedtop)
+    ni, nj = size(T)
+
+    # insulated at the top and sides
+    @parallel (1:ni) bc_horizontal_neumann!(T, 0, nj, 1)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
+    
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
-    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, size(T,1))
-    #@parallel (1:size(T,1)) bc_horizontal_dirichlet!(T, Tair, jair)
-    @parallel (1:size(T,1)) bc_top_neumann!(T)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
 end
 
 function main2(pargs)
@@ -320,7 +337,6 @@ function main2(pargs)
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
                             lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0)
-    N_active_sites = sum(kmc.active)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
@@ -334,7 +350,7 @@ function main2(pargs)
 
     push!(t_series, kmc.t)
     push!(T_series, sum(kmc.T) / length(kmc.T))
-    push!(α_series, sum(kmc.χ) / N_active_sites)
+    push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
@@ -342,7 +358,7 @@ function main2(pargs)
         if (iter % iterout == 0)
             push!(t_series, kmc.t)
             push!(T_series, sum(kmc.T) / length(kmc.T))
-            push!(α_series, sum(kmc.χ) / N_active_sites)
+            push!(α_series, sum(kmc.χ) / sum(kmc.active))
         end
         if (iter % iterplot == 0)
             p = heatmap(permutedims(kmc.T[:, :, 1]))
@@ -366,14 +382,14 @@ function main2(pargs)
             last_update = time()
             t = kmc.t
             Tavg = sum(kmc.T) / length(kmc.T)
-            α = sum(kmc.χ) / N_active_sites
+            α = sum(kmc.χ) / sum(kmc.active)
             @show iter, t, α, Tavg, kmc.dt, iter/maxiter, t/maxtime
         end
     end
 
     push!(t_series, kmc.t)
     push!(T_series, sum(kmc.T) / length(kmc.T))
-    push!(α_series, sum(kmc.χ) / N_active_sites)
+    push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     if doplot
         p = plot(t_series, χ_series)
