@@ -253,6 +253,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
     new_ihead = round(Int, kmc.v0*kmc.t) + kmc.i0
     if new_ihead <= size(kmc.T, 1) && new_ihead > kmc.ihead
         deposit!(kmc, (kmc.ihead+1):new_ihead)
+        kmc.ihead = new_ihead
     end
 end
 
