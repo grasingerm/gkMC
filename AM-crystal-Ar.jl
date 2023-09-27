@@ -236,7 +236,11 @@ function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
 end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
-    kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    if irange.start > 1
+        kmc.T[(irange.start-1):irange.stop, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    else
+        kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    end
     kmc.Ci[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.C0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
@@ -335,6 +339,7 @@ function main2(pargs)
     τc = 1e-0
     Cbed, C0, Cair = pargs["Cbed"], pargs["C0"], pargs["Cair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
+    clims = (Tair, T0)
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
                             lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0)
@@ -362,7 +367,7 @@ function main2(pargs)
             push!(α_series, sum(kmc.χ) / sum(kmc.active))
         end
         if (iter % iterplot == 0)
-            p = heatmap(permutedims(kmc.T[:, :, 1]))
+            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
             title!("Temperature")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
