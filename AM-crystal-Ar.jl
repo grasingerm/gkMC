@@ -339,6 +339,7 @@ function main2(pargs)
     τc = 1e-0
     Cbed, C0, Cair = pargs["Cbed"], pargs["C0"], pargs["Cair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
+    clims = (Tair, T0)
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
                             lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0)
@@ -366,7 +367,7 @@ function main2(pargs)
             push!(α_series, sum(kmc.χ) / sum(kmc.active))
         end
         if (iter % iterplot == 0)
-            p = heatmap(permutedims(kmc.T[:, :, 1]))
+            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
             title!("Temperature")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
