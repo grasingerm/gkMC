@@ -236,7 +236,11 @@ function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
 end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
-    kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    if irange.start > 1
+        kmc.T[(irange.start-1):irange.stop, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    else
+        kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
+    end
     kmc.Ci[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.C0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
