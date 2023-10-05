@@ -209,7 +209,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
             if !kmc.active[i, j]; continue; end
             idx = (j-1)*ni + i
             kmc.Ki[i,j] = kmc.Ai * exp(-kmc.Ei/(kmc.T0 - kmc.T[i, j])) #Arrhenious model fitted for kinetic coeeficient Ki from (Bessard et al, J. Therm. Anal. Calorim. 2014)
-            kmc.dχ[idx] = kmc.n * kmc.Ki[i,j] * (exp((-kmc.Ki[i,j]*kmc.t)^kmc.n)) * (log((1/(exp(-(kmc.Ki[i,j]*kmc.t)^kmc.n)))^((kmc.n-1)/kmc.n))) #Rate law from (Bessard et al, J. Therm. Anal. Calorim. 2014)
+            kmc.dχ[idx] = kmc.n * kmc.Ki[i,j] * (exp(-(kmc.Ki[i,j]*kmc.t)^kmc.n)) * (log((1/(exp(-(kmc.Ki[i,j]*kmc.t)^kmc.n)))^((kmc.n-1)/kmc.n))) #Rate law from (Bessard et al, J. Therm. Anal. Calorim. 2014)
             event_handlers[idx] = (crystallize!, (i, j))
             #elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
                 #rates[idx] = kmc.A*exp(-kmc.Ei/(kmc.T[i, j] - kmc.T0))
