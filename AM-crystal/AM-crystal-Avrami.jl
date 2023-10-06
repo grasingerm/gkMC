@@ -22,9 +22,9 @@ else
     @init_parallel_stencil(Threads, Float64, 2);
 end
 
-@parallel function diffusion2D_step!(dT, T, Ci, lam, _dx, _dy)
-    @inn(dT) = lam*((@d_xi(Ci)*@d_xi(T) + @inn(Ci)*@d2_xi(T))*_dx^2 + 
-                    (@d_yi(Ci)*@d_yi(T) + @inn(Ci)*@d2_yi(T))*_dy^2)
+@parallel function diffusion2D_step!(dT, T, κi, λi, _dx, _dy)
+    @inn(dT) = λi*((@d_xi(κi)*@d_xi(T) + @inn(κi)*@d2_xi(T))*_dx^2 + 
+                    (@d_yi(κi)*@d_yi(T) + @inn(κi)*@d2_yi(T))*_dy^2)
     return
 end
 
@@ -53,19 +53,27 @@ s = ArgParseSettings();
   "--n"
     help = "Avrami exponent; default from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64
-    default = 2.10
-  "--C0"
-    help = "Thermal diffusivity of PEEK"
-    arg_type = Float64 
-    default = 0.25e-3
-  "--Cbed"
-    help = "Thermal diffusivity of copper bed"
+    default = 2.0
+  "--c0"
+    help = "specific heat of PEEK ()"
     arg_type = Float64
-    default = 0.4
-  "--Cair"
-    help = "Thermal diffusivity of air"
+    default = 
+  "--ρ0"
+    help = "density of PEEK ()"
+    arg_type = Float64
+    default = 
+  "--κ0"
+    help = "Thermal conductivity of PEEK (W/μm*K)"
     arg_type = Float64 
-    default = 5e-5
+    default = 0.25e-6
+  "--κbed"
+    help = "Thermal conductivity of copper bed (W/μm*K)"
+    arg_type = Float64
+    default = 401.0e-6
+  "--κair"
+    help = "Thermal conductivity of air (W/μm*K)"
+    arg_type = Float64 
+    default = 0.0024e-6
   "--dT", "-d"
     help = "change in temperature due to crystallization"
     arg_type = Float64
@@ -113,7 +121,7 @@ s = ArgParseSettings();
   "--iterplot"
     help = "Iterations per plot"
     arg_type = Int
-    default = convert(Int, 1e4)
+    default = convert(Int, 5e3)
   "--figname"
     help = "figure name"
     arg_type = String
@@ -147,8 +155,8 @@ mutable struct KineticMonteCarlo
     Ei::Float64
     ΔT::Float64
     T
-    Ci
-    lam::Float64
+    κi
+    λi
     dx::Float64
     ℓx::Float64
     dy::Float64
@@ -159,14 +167,13 @@ mutable struct KineticMonteCarlo
     v0::Float64
     jbed::Int
     jair::Int
-    C0::Float64
     dχ::Array{Float64, 1}
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, dt::Real, max_dt::Real, 
-                           Ai::Real, Ei::Real, ΔT::Real, lam::Real, 
-                           Cbed::Real, C0::Real, Cair::Real,
+                           Ai::Real, Ei::Real, ΔT::Real, λ0::Real, λbed::Real, λair::Real,
+                           κbed::Real, κ0::Real, κair::Real,
                            Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real, n::Real)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     nevents = ni*nj + 1
@@ -179,17 +186,20 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     T[:, 1:jbed] .= Tbed
     T[:, (jbed+1):end] .= Tair
     T[1:i0, (jbed+1):(end-jair)] .= T0
-    Ci = @zeros(ni, nj)
-    Ci[:, 1:jbed] .= Cbed
-    Ci[:, (jbed+1):end] .= Cair
-    Ci[1:i0, (jbed+1):(end-jair)] .= C0
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, Ci, lam, 
-                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, C0, dχ)
+    κi = @zeros(ni, nj)
+    κi[:, 1:jbed] .= κbed
+    κi[:, (jbed+1):end] .= κair
+    κi[1:i0, (jbed+1):(end-jair)] .= κ0
+    λi[:, 1:jbed] .= λbed
+    λi[:, (jbed+1):end] .= λair
+    λi[1:i0, (jbed+1):(end-jair)] .= λ0
+    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, κi, λi, 
+                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, dχ)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     prob = ODEProblem((dT, T, p, t) -> begin
-        @parallel diffusion2D_step!(dT, kmc.T, kmc.Ci, kmc.lam, 1/kmc.dx, 1/kmc.dy)
+        @parallel diffusion2D_step!(dT, kmc.T, kmc.Ci, kmc.λi, 1/kmc.dx, 1/kmc.dy)
         bc!(kmc.T)
     end, kmc.T, (0.0, kmc.dt))
     sol = solve(prob, ROCK4(), save_everystep=false, save_start=false)
@@ -202,6 +212,7 @@ end
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
     nevents = ni*nj + 1
+    kmc.dχ = zeros(nevents)
     event_handlers = Vector{Any}(undef, nevents)
     
     for j=1:nj
@@ -226,7 +237,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     (rates=kmc.dχ, event_handlers=event_handlers)
 end
 function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int)
-    kmc.χ[i, j] = 1 - exp(kmc.Ki[i,j]*kmc.t)^kmc.n #Avrami model [input model from (Bessard et al, J. Therm. Anal. Calorim. 2014) ultimately]
+    kmc.χ[i, j] = 1 - exp(-(kmc.Ki[i,j]*kmc.t)^kmc.n) #Avrami model [input model from (Bessard et al, J. Therm. Anal. Calorim. 2014) ultimately]
     kmc.T[i, j] += kmc.ΔT
 end
 
@@ -242,7 +253,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
   else
     kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
   end
-    kmc.Ci[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.C0
+    kmc.κi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.κ0
+    kmc.λi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.λ0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
 
@@ -311,7 +323,16 @@ function bc_p!(T, Tb, jbedbot, jbedtop, Tair, jair)
 end
 
 function main2(pargs)
-
+    c0 = pargs["c0"]
+    cair = 
+    cbed = 
+    ρ0 = pargs["ρ0"]
+    ρair = 
+    ρbed = 
+    datadir_Crystal = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Crystal"
+    mkpath(datadir_Crystal)
+    datadir_Temp = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Temp"
+    mkpath(datadir_Temp)
     maxiter = pargs["maxiter"]
     iterout = pargs["iterout"]
     iterplot = pargs["iterplot"]
@@ -323,7 +344,9 @@ function main2(pargs)
     Ai = pargs["Ai"]
     @show Ei = uconvert(Unitful.NoUnits, pargs["Ei"]*u"J / mol" / _NA / _kB / 1u"K")  # equivalent to Ei/R
     ΔT = pargs["dT"]
-    lam = 1.0
+    λ0 = 1/(c0*ρ0)
+    λair = 1/(cair*ρair)
+    λbed = 1/(cbed*ρbed)
     jbed = pargs["jbed"]
     jair = pargs["jair"]
     i0 = pargs["i0"]
@@ -334,15 +357,15 @@ function main2(pargs)
     ℓy = pargs["nj"]        # μm
     dy = 1                  # μm
     dt = 1e-0               # seconds
-    Cbed, C0, Cair = pargs["Cbed"], pargs["C0"], pargs["Cair"]
+    κbed, κ0, κair = pargs["κbed"], pargs["κ0"], pargs["κair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     clims = (Tair, T0)
     n = pargs["n"]
     nj = pargs["nj"]
-    ni = pargs["ni"]
+  
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, dt, maxdt, Ai, Ei, ΔT, 
-                            lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0, n)
+                            λ0, λbed, λair, κbed, κ0, κair, Tbed, T0, Tair, i0, v0, n)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
@@ -369,7 +392,7 @@ function main2(pargs)
         if (iter % iterplot == 0)
             p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
             title!("Temperature")
-            savefig(figname*"_temp-$iter.$figtype")
+            savefig(joinpath(datadir_Temp, figname*"_temp-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
@@ -377,7 +400,7 @@ function main2(pargs)
             end
             p = heatmap(permutedims(kmc.χ[:, :, 1]))
             title!("Crystallization")
-            savefig(figname*"_crystal-$iter.$figtype")
+            savefig(joinpath(datadir_Crystal, figname*"_crystal-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
