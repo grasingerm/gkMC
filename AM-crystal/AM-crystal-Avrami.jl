@@ -23,8 +23,8 @@ else
 end
 
 @parallel function diffusion2D_step!(dT, T, κi, λi, _dx, _dy)
-    @inn(dT) = λi*((@d_xi(κi)*@d_xi(T) + @inn(κi)*@d2_xi(T))*_dx^2 + 
-                    (@d_yi(κi)*@d_yi(T) + @inn(κi)*@d2_yi(T))*_dy^2)
+    @inn(dT) = ((@d_xi(κi*λi)*@d_xi(T) + @inn(κi*λi)*@d2_xi(T))*_dx^2 + 
+                    (@d_yi(κi*λi)*@d_yi(T) + @inn(κi*λi)*@d2_yi(T))*_dy^2)
     return
 end
 
@@ -187,6 +187,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     κi[:, 1:jbed] .= κbed
     κi[:, (jbed+1):end] .= κair
     κi[1:i0, (jbed+1):(end-jair)] .= κ0
+    λi = @zeros(ni, nj)
     λi[:, 1:jbed] .= λbed
     λi[:, (jbed+1):end] .= λair
     λi[1:i0, (jbed+1):(end-jair)] .= λ0
@@ -196,7 +197,7 @@ end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     prob = ODEProblem((dT, T, p, t) -> begin
-        @parallel diffusion2D_step!(dT, kmc.T, kmc.Ci, kmc.λi, 1/kmc.dx , 1/kmc.dy)
+        @parallel diffusion2D_step!(dT, kmc.T, kmc.κi, kmc.λi, 1/kmc.dx , 1/kmc.dy)
         bc!(kmc.T)
     end, kmc.T, (0.0, kmc.dt))
     sol = solve(prob, ROCK4(), save_everystep=false, save_start=false)
@@ -321,8 +322,8 @@ end
 
 function main2(pargs)
     c0 = pargs["c0"]
-    cair = 1005 # J/(kg*K)
-    cbed = 385 # J/(kg*K)
+    cair = 1005.0 # J/(kg*K)
+    cbed = 385.0 # J/(kg*K)
     ρ0 = pargs["ρ0"]
     ρair = 1.204 # kg/m^3
     ρbed = 8.96e3 # kg/m^3
