@@ -22,9 +22,9 @@ else
     @init_parallel_stencil(Threads, Float64, 2);
 end
 
-@parallel function diffusion2D_step!(dT, T, κi, λi, _dx, _dy)
-    @inn(dT) = ((@d_xi(κi*λi)*@d_xi(T) + @inn(κi*λi)*@d2_xi(T))*_dx^2 + 
-                    (@d_yi(κi*λi)*@d_yi(T) + @inn(κi*λi)*@d2_yi(T))*_dy^2)
+@parallel function diffusion2D_step!(dT, T, αi, _dx, _dy)
+    @inn(dT) = ((@d_xi(αi)*@d_xi(T) + @inn(αi)*@d2_xi(T))*_dx^2 + 
+                    (@d_yi(αi)*@d_yi(T) + @inn(αi)*@d2_yi(T))*_dy^2)
     return
 end
 
@@ -152,7 +152,7 @@ mutable struct KineticMonteCarlo
     ΔT::Float64
     T
     κi
-    λi
+    αi 
     dx::Float64
     ℓx::Float64
     dy::Float64
@@ -169,7 +169,7 @@ end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, jmat::Int, dt::Real, max_dt::Real, 
-                           Ai::Real, Ei::Real, ΔT::Real, λ0::Real, λbed::Real, λair::Real,
+                           Ai::Real, Ei::Real, ΔT::Real, α0::Real, αbed::Real, αair::Real,
                            κbed::Real, κ0::Real, κair::Real,
                            Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real, n::Real)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
@@ -187,17 +187,17 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     κi[:, 1:jbed] .= κbed
     κi[:, (jbed+1):end] .= κair
     κi[1:i0, (jbed+1):(end-jair)] .= κ0
-    λi = @zeros(ni, nj)
-    λi[:, 1:jbed] .= λbed
-    λi[:, (jbed+1):end] .= λair
-    λi[1:i0, (jbed+1):(end-jair)] .= λ0
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, κi, λi, 
+    αi = @zeros(ni, nj)
+    αi[:, 1:jbed] .= αbed
+    αi[:, (jbed+1):end] .= αair
+    αi[1:i0, (jbed+1):(end-jair)] .= α0
+    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, κi, αi, 
                       dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, jmat, dχ)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     prob = ODEProblem((dT, T, p, t) -> begin
-        @parallel diffusion2D_step!(dT, kmc.T, kmc.κi, kmc.λi, 1/kmc.dx , 1/kmc.dy)
+        @parallel diffusion2D_step!(dT, kmc.T, kmc.αi, 1/kmc.dx , 1/kmc.dy)
         bc!(kmc.T)
     end, kmc.T, (0.0, kmc.dt))
     sol = solve(prob, ROCK4(), save_everystep=false, save_start=false)
@@ -327,6 +327,10 @@ function main2(pargs)
     ρ0 = pargs["ρ0"]
     ρair = 1.204 # kg/m^3
     ρbed = 8.96e3 # kg/m^3
+    λ0 = (c0*ρ0)
+    λair = (cair*ρair)
+    λbed = (cbed*ρbed)
+
     datadir_Crystal = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Crystal"
     mkpath(datadir_Crystal)
     datadir_Temp = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Temp"
@@ -339,12 +343,10 @@ function main2(pargs)
     showplot = pargs["showplot"]
     figname = pargs["figname"]
     figtype = pargs["figtype"]
-    Ai = pargs["Ai"]
+
     @show Ei = uconvert(Unitful.NoUnits, pargs["Ei"]*u"J / mol" / _NA / _kB / 1u"K")  # equivalent to Ei/R
+    Ai = pargs["Ai"]
     ΔT = pargs["dT"]
-    λ0 = 1/(c0*ρ0)
-    λair = 1/(cair*ρair)
-    λbed = 1/(cbed*ρbed)
     i0 = pargs["i0"]
     v0 = pargs["v0"]
     maxdt = pargs["max-dt"]
@@ -360,10 +362,13 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     clims = (Tair, T0)
     n = pargs["n"]
+    α0 = κ0/λ0
+    αbed = κbed/λbed
+    αair = κair/λair
   
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, jmat, dt, maxdt, Ai, Ei, ΔT, 
-                            λ0, λbed, λair, κbed, κ0, κair, Tbed, T0, Tair, i0, v0, n)
+                           α0, αbed, αair, κbed, κ0, κair, Tbed, T0, Tair, i0, v0, n)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
