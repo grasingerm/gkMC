@@ -101,7 +101,7 @@ s = ArgParseSettings();
   "--max-dt"
     help = "maximum time step"
     arg_type = Float64
-    default = 1.0
+    default = 4.5e-9
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
@@ -151,7 +151,6 @@ mutable struct KineticMonteCarlo
     Ei::Float64
     ΔT::Float64
     T
-    κi
     αi 
     dx::Float64
     ℓx::Float64
@@ -160,6 +159,7 @@ mutable struct KineticMonteCarlo
     ihead::Int
     i0::Int
     T0::Float64
+    α0::Float64
     v0::Float64
     jbed::Int
     jair::Int
@@ -170,7 +170,6 @@ end
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, jmat::Int, dt::Real, max_dt::Real, 
                            Ai::Real, Ei::Real, ΔT::Real, α0::Real, αbed::Real, αair::Real,
-                           κbed::Real, κ0::Real, κair::Real,
                            Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real, n::Real)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     nevents = ni*nj + 1
@@ -183,16 +182,12 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     T[:, 1:jbed] .= Tbed
     T[:, (jbed+1):end] .= Tair
     T[1:i0, (jbed+1):(end-jair)] .= T0
-    κi = @zeros(ni, nj)
-    κi[:, 1:jbed] .= κbed
-    κi[:, (jbed+1):end] .= κair
-    κi[1:i0, (jbed+1):(end-jair)] .= κ0
     αi = @zeros(ni, nj)
     αi[:, 1:jbed] .= αbed
     αi[:, (jbed+1):end] .= αair
     αi[1:i0, (jbed+1):(end-jair)] .= α0
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, κi, αi, 
-                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, jmat, dχ)
+    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, αi, 
+                      dx, ℓx, dy, ℓy, i0, i0, T0, α0, v0, jbed, jair, jmat, dχ)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
@@ -251,8 +246,7 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
   else
     kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
   end
-    kmc.κi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.κ0
-    kmc.λi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.λ0
+    kmc.αi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.α0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
 
@@ -358,17 +352,17 @@ function main2(pargs)
     jbed = convert(Int,(ℓy/dy)*(1/5))
     jair = convert(Int, (ℓy/dy)-(jbed+jmat))
     dt = 1e-0               # seconds
-    κbed, κ0, κair = pargs["κbed"], pargs["κ0"], pargs["κair"]
+    κbed =pargs["κbed"]
+    κ0 = pargs["κ0"]
+    κair = pargs["κair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     clims = (Tair, T0)
     n = pargs["n"]
-    α0 = κ0/λ0
-    αbed = κbed/λbed
-    αair = κair/λair
-  
+    α0, αbed, αair = (κ0/λ0), (κbed/λbed), (κair/λair)
+    nj = length(0:dy:ℓy)
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, jmat, dt, maxdt, Ai, Ei, ΔT, 
-                           α0, αbed, αair, κbed, κ0, κair, Tbed, T0, Tair, i0, v0, n)
+                           α0, αbed, αair, Tbed, T0, Tair, i0, v0, n)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
