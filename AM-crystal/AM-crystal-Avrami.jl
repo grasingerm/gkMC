@@ -24,8 +24,8 @@ else
 end
 
 @parallel function diffusion2D_step!(dT, T, κi, λi, _dx, _dy)
-    @inn(dT) = ((@d_xi(κi)*@d_xi(T) + @inn(κi)*@d2_xi(T))*_dx^2 + 
-                    (@d_yi(κi)*@d_yi(T) + @inn(κi)*@d2_yi(T))*_dy^2) * 1/λi
+    @inn(dT) = ( ( @d_xi(κi)*@d_xi(T) + @inn(κi)*@d2_xi(T) ) * _dx^2 + 
+                 ( @d_yi(κi)*@d_yi(T) + @inn(κi)*@d2_yi(T) ) * _dy^2 ) / @inn(λi)
     return
 end
 
@@ -55,14 +55,18 @@ s = ArgParseSettings();
     help = "Avrami exponent; default from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64
     default = 2.0
-  "--c0"
-    help = "specific heat of PEEK (J/kg*K)"
+  "--λ0"
+    help = "(J/m^3*K)"
     arg_type = Float64
-    default = 1770.0
-  "--ρ0"
-    help = "density of PEEK (kg/m^3)"
+    default = 2.54e6
+  "--λbed"
+    help = "(J/m^3*K)"
     arg_type = Float64
-    default = 1435.0
+    default = 3.45e6
+  "--λair"
+    help = "(J/m^3*K)"
+    arg_type = Float64
+    default = 1210.02
   "--κ0"
     help = "Thermal conductivity of PEEK (W/m*K)"
     arg_type = Float64 
@@ -102,7 +106,7 @@ s = ArgParseSettings();
   "--max-dt"
     help = "maximum time step"
     arg_type = Float64
-    default = 4.5e-9
+    default = 1e-10
     "--tint-algo"
     help = "ODE solver for time integration (ROCK4|ROCK8|CVODE_BDF(linear_solver=:GMRES))"
     arg_type = String
@@ -361,16 +365,6 @@ function bc_p!(T, Tb, jbedbot, jbedtop, Tair, jair)
 end
 
 function main2(pargs)
-    c0 = pargs["c0"]
-    cair = 1005.0 # J/(kg*K)
-    cbed = 385.0 # J/(kg*K)
-    ρ0 = pargs["ρ0"]
-    ρair = 1.204 # kg/m^3
-    ρbed = 8.96e3 # kg/m^3
-    λ0 = (c0*ρ0)
-    λair = (cair*ρair)
-    λbed = (cbed*ρbed)
-
     datadir_Crystal = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Crystal"
     mkpath(datadir_Crystal)
     datadir_Temp = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Temp"
@@ -398,6 +392,9 @@ function main2(pargs)
     jbed = convert(Int,(ℓy/dy)*(1/5))
     jair = convert(Int, (ℓy/dy)-(jbed+jmat))
     dt = 1e-0               # seconds
+    λ0 = pargs["λ0"]
+    λbed = pargs["λbed"]
+    λair = pargs["λair"]
     κbed, κ0, κair =pargs["κbed"], pargs["κ0"], pargs["κair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     clims = (Tair, T0)
