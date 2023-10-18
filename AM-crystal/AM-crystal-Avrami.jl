@@ -11,6 +11,7 @@ using PProf
 using DelimitedFiles
 using OrdinaryDiffEq
 using Distributions
+using LinearAlgebra
 
 const USE_GPU = false
 import MPI
@@ -22,9 +23,9 @@ else
     @init_parallel_stencil(Threads, Float64, 2);
 end
 
-@parallel function diffusion2D_step!(dT, T, αi, _dx, _dy)
-    @inn(dT) = ((@d_xi(αi)*@d_xi(T) + @inn(αi)*@d2_xi(T))*_dx^2 + 
-                    (@d_yi(αi)*@d_yi(T) + @inn(αi)*@d2_yi(T))*_dy^2)
+@parallel function diffusion2D_step!(dT, T, κi, λi, _dx, _dy)
+    @inn(dT) = ( ( @d_xi(κi)*@d_xi(T) + @inn(κi)*@d2_xi(T) ) * _dx^2 + 
+                 ( @d_yi(κi)*@d_yi(T) + @inn(κi)*@d2_yi(T) ) * _dy^2 ) / @inn(λi)
     return
 end
 
@@ -54,14 +55,18 @@ s = ArgParseSettings();
     help = "Avrami exponent; default from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64
     default = 2.0
-  "--c0"
-    help = "specific heat of PEEK (J/kg*K)"
+  "--λ0"
+    help = "(J/m^3*K)"
     arg_type = Float64
-    default = 1770.0
-  "--ρ0"
-    help = "density of PEEK (kg/m^3)"
+    default = 2.54e6
+  "--λbed"
+    help = "(J/m^3*K)"
     arg_type = Float64
-    default = 1435.0
+    default = 3.45e6
+  "--λair"
+    help = "(J/m^3*K)"
+    arg_type = Float64
+    default = 1210.02
   "--κ0"
     help = "Thermal conductivity of PEEK (W/m*K)"
     arg_type = Float64 
@@ -101,7 +106,17 @@ s = ArgParseSettings();
   "--max-dt"
     help = "maximum time step"
     arg_type = Float64
-    default = 4.5e-9
+    default = 1e-10
+    "--tint-algo"
+    help = "ODE solver for time integration (ROCK4|ROCK8|CVODE_BDF(linear_solver=:GMRES))"
+    arg_type = String
+    default = "ROCK4"
+  "--tint-reltol"
+    help = "relative tolerance for time integration"
+    arg_type = Real
+  "--tint-abstol"
+    help = "absolute tolerance for time integration"
+    arg_type = Real
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
@@ -139,6 +154,24 @@ pargs = parse_args(s);
 const _kB = PhysicalConstants.CODATA2018.BoltzmannConstant
 const _NA = PhysicalConstants.CODATA2018.AvogadroConstant
 
+function init_solver(pargs)
+  solver_type = try
+      eval(Meta.parse(pargs["tint-algo"]))
+  catch e 
+      @error("Solver algorithm \"$(pargs["tint-algo"])\" not understood");
+  end
+  opts = Dict()
+  if haskey(pargs, "tint-reltol")
+      opts[:reltol] = pargs["tint-reltol"]
+  end
+  if haskey(pargs, "tint-abstol")
+      opts[:abstol] = pargs["tint-abstol"]
+  end
+  return (prob) -> begin
+      solve(prob, solver_type(); opts...)
+  end
+end
+
 mutable struct KineticMonteCarlo
     t::Float64
     dt::Float64
@@ -151,7 +184,8 @@ mutable struct KineticMonteCarlo
     Ei::Float64
     ΔT::Float64
     T
-    αi 
+    κi 
+    λi
     dx::Float64
     ℓx::Float64
     dy::Float64
@@ -159,18 +193,21 @@ mutable struct KineticMonteCarlo
     ihead::Int
     i0::Int
     T0::Float64
-    α0::Float64
+    κ0::Float64
+    λ0::Float64
     v0::Float64
     jbed::Int
     jair::Int
     jmat::Int
     dχ::Array{Float64, 1}
+    solver::Function
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, jmat::Int, dt::Real, max_dt::Real, 
-                           Ai::Real, Ei::Real, ΔT::Real, α0::Real, αbed::Real, αair::Real,
-                           Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real, n::Real)
+                           Ai::Real, Ei::Real, ΔT::Real, κ0::Real, κbed::Real, κair::Real,
+                           λ0::Real, λbed::Real, λair::Real, Tbed::Real, T0::Real, Tair::Real, 
+                           i0::Int, v0::Real, n::Real, solver::Function)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     nevents = ni*nj + 1
     χ = fill(0.0, ni, nj)
@@ -182,24 +219,36 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     T[:, 1:jbed] .= Tbed
     T[:, (jbed+1):end] .= Tair
     T[1:i0, (jbed+1):(end-jair)] .= T0
-    αi = @zeros(ni, nj)
-    αi[:, 1:jbed] .= αbed
-    αi[:, (jbed+1):end] .= αair
-    αi[1:i0, (jbed+1):(end-jair)] .= α0
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, αi, 
-                      dx, ℓx, dy, ℓy, i0, i0, T0, α0, v0, jbed, jair, jmat, dχ)
+    κi = @zeros(ni, nj)
+    κi[:, 1:jbed] .= κbed
+    κi[:, (jbed+1):end] .= κair
+    κi[1:i0, (jbed+1):(end-jair)] .= κ0
+    λi = @zeros(ni, nj)
+    λi[:, 1:jbed] .= λbed
+    λi[:, (jbed+1):end] .= λair
+    λi[1:i0, (jbed+1):(end-jair)] .= λ0
+    KineticMonteCarlo(0.0, dt, max_dt, χ, active, Ki, Ai, n, Ei, ΔT, T, κi, λi, 
+                      dx, ℓx, dy, ℓy, i0, i0, T0, κ0, λ0, v0, jbed, jair, jmat, dχ, solver)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
-    prob = ODEProblem((dT, T, p, t) -> begin
-        @parallel diffusion2D_step!(dT, kmc.T, kmc.αi, 1/kmc.dx , 1/kmc.dy)
-        bc!(kmc.T)
-    end, kmc.T, (0.0, kmc.dt))
-    sol = solve(prob, ROCK4(), save_everystep=false, save_start=false)
-                #reltol=1e-8, abstol=1e-8)
-    #sol = solve(prob, CVODE_BDF(linear_solver=:GMRES))
-    kmc.T = sol[end]
-    bc!(kmc.T)
+  nintsteps = floor(Int, kmc.dt / kmc.max_dt)
+  Δt_remaining = kmc.dt - nintsteps*kmc.max_dt
+  lambda_int(Δt) = begin
+      prob = ODEProblem((dT, T, p, t) -> begin
+          @parallel diffusion2D_step!(dT, kmc.T, kmc.κi, kmc.λi, 1/kmc.dx, 1/kmc.dy)
+          bc!(kmc.T)
+      end, kmc.T, (0.0, Δt))
+      kmc.solver(prob)
+  end
+  for i=1:nintsteps
+      sol = lambda_int(kmc.max_dt)
+      kmc.T = sol[end]
+      bc!(kmc.T)
+  end
+  sol = lambda_int(Δt_remaining)
+  kmc.T = sol[end]
+  bc!(kmc.T)
 end
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
@@ -223,7 +272,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     #@assert !(0.0 in rates[1:end-1]) "rates = $rates, findnext(x -> x == 0.0, rates, 1) = $(findnext(x -> x == 0.0, rates, 1))"
 
     total_crystal_rate = (length(kmc.dχ) > 0) ? sum(kmc.dχ) : 0.0
-    kmc.dt = min(kmc.max_dt, 1 / total_crystal_rate) # variable time integration
+    kmc.dt = min(100.0, 1 / total_crystal_rate) # variable time integration
     push!(kmc.dχ, 1/kmc.dt)
     push!(event_handlers, (transfer_heat!, (bc!,)))
 
@@ -246,7 +295,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
   else
     kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
   end
-    kmc.αi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.α0
+    kmc.κi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.κ0
+    kmc.λi[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.λ0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
 
@@ -315,16 +365,6 @@ function bc_p!(T, Tb, jbedbot, jbedtop, Tair, jair)
 end
 
 function main2(pargs)
-    c0 = pargs["c0"]
-    cair = 1005.0 # J/(kg*K)
-    cbed = 385.0 # J/(kg*K)
-    ρ0 = pargs["ρ0"]
-    ρair = 1.204 # kg/m^3
-    ρbed = 8.96e3 # kg/m^3
-    λ0 = (c0*ρ0)
-    λair = (cair*ρair)
-    λbed = (cbed*ρbed)
-
     datadir_Crystal = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Crystal"
     mkpath(datadir_Crystal)
     datadir_Temp = "/Users/zachary/Library/CloudStorage/OneDrive-UniversityofPittsburgh/AFRL/Code/Simulation_Results_Temp"
@@ -352,17 +392,17 @@ function main2(pargs)
     jbed = convert(Int,(ℓy/dy)*(1/5))
     jair = convert(Int, (ℓy/dy)-(jbed+jmat))
     dt = 1e-0               # seconds
-    κbed =pargs["κbed"]
-    κ0 = pargs["κ0"]
-    κair = pargs["κair"]
+    λ0 = pargs["λ0"]
+    λbed = pargs["λbed"]
+    λair = pargs["λair"]
+    κbed, κ0, κair =pargs["κbed"], pargs["κ0"], pargs["κair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     clims = (Tair, T0)
     n = pargs["n"]
-    α0, αbed, αair = (κ0/λ0), (κbed/λbed), (κair/λair)
     nj = length(0:dy:ℓy)
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, jmat, dt, maxdt, Ai, Ei, ΔT, 
-                           α0, αbed, αair, Tbed, T0, Tair, i0, v0, n)
+                           κ0, κbed, κair, λ0, λbed, λair, Tbed, T0, Tair, i0, v0, n, init_solver(pargs))
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
