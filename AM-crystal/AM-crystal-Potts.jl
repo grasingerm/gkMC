@@ -9,7 +9,9 @@ using SpecialFunctions
 using Profile
 using PProf
 using DelimitedFiles
+#using DifferentialEquations
 using OrdinaryDiffEq
+using ODEInterfaceDiffEq
 using Distributions
 using LinearAlgebra
 
@@ -25,7 +27,7 @@ end
 
 @parallel function diffusion2D_step!(dT, T, k, Cρ, _dx, _dy)
     @inn(dT) = ( (@d_xi(k)*@d_xi(T) + @inn(k)*@d2_xi(T))*_dx^2 + 
-                 (@d_yi(k)*@d_yi(T) + @inn(k)*@d2_yi(T))*_dy^2   ) / Cρ
+                 (@d_yi(k)*@d_yi(T) + @inn(k)*@d2_yi(T))*_dy^2   ) / @inn(Cρ)
     return
 end
 
@@ -33,59 +35,71 @@ s = ArgParseSettings();
 @add_arg_table! s begin
   "--T0"
     help = "Temperature of material as printed (K)"
-    arg_type = Real 
+    arg_type = Float64 
     default = 653.0
   "--Tbed"
     help = "Bed temperature (K)"
-    arg_type = Real
+    arg_type = Float64
     default = 400.0
   "--Tair"
     help = "Temperature of material as printed (K)"
-    arg_type = Real 
+    arg_type = Float64 
     default = 300.0
   "--Tc"
     help = "Crystallizaiton temperature of PEEK (K); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
-    arg_type = Real
+    arg_type = Float64
     default = 616.0
+  "--Tg"
+    help = "Glass transition temperature of PEEK (K)"
+    arg_type = Float64
+    default = 416.15
   "--EA"
     help = "Activation energy (J / mol); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
-    arg_type = Real 
+    arg_type = Float64 
     default = 1316.0
+  "--M"
+    help = "Rotational mobility constant"
+    arg_type = Float64 
+    default = 1000.0
   "--J"
     help = "Interaction potential in activation energy (J / mol) between neighbors"
-    arg_type = Real 
-    default = 50.0
+    arg_type = Float64 
+    default = 100.0
+  "--ndirs"
+    help = "Number of discrete crystal plane directions"
+    arg_type = Int 
+    default = 8
   "--KA"
     help = "Crystallization rate constant; default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
-    arg_type = Real 
+    arg_type = Float64 
     default = 0.91
   "--k0"
-    help = "Thermal conductivity of PEEK (W / m K)"
-    arg_type = Real 
-    default = 0.25
+    help = "Thermal conductivity of PEEK (W / cm K)"
+    arg_type = Float64 
+    default = 0.25e-2
   "--kbed"
-    help = "Thermal conductivity of copper bed (W / m K)"
-    arg_type = Real
-    default = 400.0
+    help = "Thermal conductivity of copper bed (W / cm K)"
+    arg_type = Float64
+    default = 400.0e-2
   "--kair"
-    help = "Thermal conductivity of air (W / m K)"
-    arg_type = Real 
-    default = 5e-2
+    help = "Thermal conductivity of air (W / cm K)"
+    arg_type = Float64 
+    default = 3e-4
   "--Cp0"
-    help = "Thermal density of PEEK (J / m^3 K)"
-    arg_type = Real 
-    default = 1320*2000
+    help = "Thermal density of PEEK (J / cm^3 K)"
+    arg_type = Float64 
+    default = 1320.0*2000.0e-6
   "--Cpbed"
-    help = "Thermal density of copper bed (J / m^3 K)"
-    arg_type = Real
-    default = 385*9000
+    help = "Thermal density of copper bed (J / cm^3 K)"
+    arg_type = Float64
+    default = 385.0*9000.0e-6
   "--Cpair"
-    help = "Thermal density of air (J / m^3 K)"
-    arg_type = Real 
-    default = 1.293*1000
+    help = "Thermal density of air (J / cm^3 K)"
+    arg_type = Float64 
+    default = 1.293*1000.0e-6
   "--dT", "-d"
     help = "change in temperature due to crystallization"
-    arg_type = Real
+    arg_type = Float64
     default = 0.0
   "--ni"
     help = "lattice sites in the x-direction"
@@ -94,61 +108,65 @@ s = ArgParseSettings();
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 141
+    default = 71
   "--lx"
-    help = "length in the x-direction"
-    arg_type = Real
-    default = 0.3
+    help = "length in the x-direction (cm)"
+    arg_type = Float64
+    default = 30.0
   "--ly"
-    help = "length in the y-direction"
-    arg_type = Real
-    default = 0.14
+    help = "length in the y-direction (cm)"
+    arg_type = Float64
+    default = 7.0
   "--tbed"
-    help = "thickness of bed (m)"
-    arg_type = Real
-    default = 0.01
+    help = "thickness of bed (cm)"
+    arg_type = Float64
+    default = 1.00
   "--tair"
-    help = "air layer thickness"
-    arg_type = Real
-    default = 0.03
+    help = "air layer thickness (cm)"
+    arg_type = Float64
+    default = 3.00
   "--l0"
-    help = "initial filament"
-    arg_type = Real
-    default = 0.03
+      help = "initial filament (cm)"
+    arg_type = Float64
+    default = 3.00
   "--v0"
-    help = "printer head velocity"
-    arg_type = Real
-    default = 301.0 / (1e4)
+      help = "printer head velocity (cm / s)"
+    arg_type = Float64
+    default = 15.0
   "--max-dt"
-    help = "maximum time step for heat transfer time integration"
-    arg_type = Real
+    help = "maximum time step for heat transfer time integration (s)"
+    arg_type = Float64
+    default = 5e-6
+  "--max-Deltat"
+    help = "maximum time step for kmc (s)"
+    arg_type = Float64
     default = 1e-3
   "--tint-algo"
-    help = "ODE solver for time integration (ROCK4|ROCK8|CVODE_BDF(linear_solver=:GMRES))"
+    help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method"
     arg_type = String
-    default = "ROCK4"
+    default = "Tsit5"
   "--tint-reltol"
     help = "relative tolerance for time integration"
-    arg_type = Real
+    arg_type = Float64
   "--tint-abstol"
     help = "absolute tolerance for time integration"
-    arg_type = Real
+    arg_type = Float64
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
     default = convert(Int, 1e7)
   "--maxtime", "-t"
     help = "maximum simulation time"
-    arg_type = Real
-    default = 2e4
-  "--iterout"
-    help = "Iterations per output"
-    arg_type = Int
-    default = convert(Int, 1e3)
-  "--iterplot"
-    help = "Iterations per plot"
-    arg_type = Int
-    default = convert(Int, 1e4)
+    arg_type = Float64
+    default = 6e1
+  "--timeout"
+    help = "Time per output (s)"
+    arg_type = Float64
+    default = 1e-2
+  "--timeplot"
+    help = "Time per plot (s)"
+    arg_type = Float64
+    default = 1e-2
   "--figname"
     help = "figure name"
     arg_type = String
@@ -174,29 +192,27 @@ function init_solver(pargs)
     solver_type = try
         eval(Meta.parse(pargs["tint-algo"]))
     catch e
-        @error("Solver algorithm \"$(pargs["tint-algo"])\" not understood");
+        @error("Solver algorithm \"$(pargs["tint-algo"])\" is not understood")
     end
     opts = Dict()
-    if haskey(pargs, "tint-reltol")
-        opts[:reltol] = pargs["tint-reltol"]
-    end
-    if haskey(pargs, "tint-abstol")
-        opts[:abstol] = pargs["tint-abstol"]
-    end
-    return (prob) -> begin
-        solve(prob, solver_type(); opts...)
-    end
+    opts[:reltol] = (haskey(pargs, "tint-reltol") && pargs["tint-reltol"] != nothing) ? pargs["tint-reltol"] : 1e-3
+    opts[:abstol] = (haskey(pargs, "tint-abstol") && pargs["tint-abstol"] != nothing) ? pargs["tint-abstol"] : 1e-6
+    return (prob) -> solve(prob, solver_type(); save_everystep=false, save_start=false, opts...)
 end
 
 mutable struct KineticMonteCarlo
     t::Float64
     dt::Float64
     max_dt::Float64
-    χ::Array{Int, 2}
+    max_Δt::Float64
+    χ::Array{Bool, 2}
+    nhat::Array{Int, 2}
     active::Array{Bool, 2}
     A::Float64
     EA::Float64
+    M::Float64
     Tc::Float64
+    Tg::Float64
     ΔT::Float64
     T
     Cρ
@@ -219,14 +235,15 @@ mutable struct KineticMonteCarlo
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
-                           jbed::Int, jair::Int, dt::Real, max_dt::Real, 
-                           A::Real, EA::Real, Tc::Real, ΔT::Real,
+                           jbed::Int, jair::Int, dt::Real, max_dt::Real, max_Δt::Real,
+                           A::Real, EA::Real, M::Real, Tc::Real, Tg::Real, ΔT::Real,
                            Cbed::Real, C0::Real, Cair::Real,
                            kbed::Real, k0::Real, kair::Real,
                            Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real,
                            J::Real, ndirs::Int, solver::Function)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
-    χ = fill(0, ni, nj)
+    χ = fill(false, ni, nj)
+    nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     active[1:i0, jbed+1:end-jair] .= true
     T = @zeros(ni, nj)
@@ -241,12 +258,13 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     k[:, 1:jbed] .= kbed
     k[:, (jbed+1):end] .= kair
     k[1:i0, (jbed+1):(end-jair)] .= k0
-    pvecs = zeros(2, ndirs+1)
-    for i in 2:(ndirs+1)
-        pvecs[i, 1] = cos( 2*pi * (i-2) / ndirs )
-        pvecs[i, 2] = sin( 2*pi * (i-2) / ndirs )
+    pvecs = zeros(2, ndirs)
+    for i in 1:ndirs
+        pvecs[1, i] = cos( 2*pi * (i) / ndirs )
+        pvecs[2, i] = sin( 2*pi * (i) / ndirs )
     end
-    KineticMonteCarlo(0.0, dt, max_dt, χ, active, A, EA, Tc, ΔT, T, Cρ, k, 
+    KineticMonteCarlo(0.0, dt, max_dt, max_Δt, χ, nhat, active, 
+                      A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
                       dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, C0, k0, J,
                       pvecs, solver
                      )
@@ -267,36 +285,50 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
         kmc.T = sol[end]
         bc!(kmc.T)
     end
-    sol = lambda_int(Δt_remaining)
-    kmc.T = sol[end]
-    bc!(kmc.T)
+    if Δt_remaining > eps()
+        sol = lambda_int(Δt_remaining)
+        kmc.T = sol[end]
+        bc!(kmc.T)
+    end
 end
 
 function num_crystal_nbrs(kmc, i, j, ni, nj)
-    return (
-             ((i > 1) ? dot(kmc.pvecs[kmc.χ[i-1, j]], kmc.pvecs[kmc.χ[i, j]]) : 0) +
-             ((i < ni) ? dot(kmc.pvecs[kmc.χ[i+1, j]], kmc.pvecs[kmc.χ[i, j]]) : 0) +
-             ((j > 1) ? dot(kmc.pvecs[kmc.χ[i, j-1]], kmc.pvecs[kmc.χ[i, j]]) : 0) +
-             ((j < nj) ? dot(kmc.pvecs[kmc.χ[i, j+1]], kmc.pvecs[kmc.χ[i, j]]) : 0)
-           )
+    (
+         ((i > 1) ?  dot(kmc.χ[i-1, j]*kmc.pvecs[kmc.nhat[i-1, j]], 
+                         kmc.pvecs[kmc.nhat[i, j]]) : 0) +
+         ((i < ni) ? dot(kmc.χ[i+1, j]*kmc.pvecs[kmc.nhat[i+1, j]], 
+                         kmc.pvecs[kmc.nhat[i, j]]) : 0) +
+         ((j > 1) ?  dot(kmc.χ[i, j-1]*kmc.pvecs[kmc.nhat[i, j-1]], 
+                         kmc.pvecs[kmc.nhat[i, j]]) : 0) +
+         ((j < nj) ? dot(kmc.χ[i, j+1]*kmc.pvecs[kmc.nhat[i, j+1]], 
+                         kmc.pvecs[kmc.nhat[i, j]]) : 0)
+    )
 end
+
+ndirs(kmc) = size(kmc.pvecs, 2)
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
-    nevents = ni*nj + 1
+    nevents = ndirs(kmc)*ni*nj + 1
     event_handlers = Vector{Any}(undef, nevents)
     rates = zeros(nevents)
 
     for j=1:nj
         Threads.@threads for i=1:ni
             if !kmc.active[i, j]; continue; end
-            idx = (j-1)*ni + i
-            nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
-            dEA = kmc.J*nnbrχ
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
-                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
-                event_handlers[idx] = (crystallize!, (i, j))
+                for k in 1:ndirs(kmc)
+                    idx = (k-1)*ni*nj + (j-1)*ni + i
+                    kmc.nhat[i, j] = k
+                    nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
+                    dEA = kmc.J*nnbrχ
+                    rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
+                    event_handlers[idx] = (crystallize!, (i, j, k))
+                end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
+                idx = (j-1)*ni + i
+                nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
+                dEA = kmc.J*nnbrχ
                 rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
@@ -305,22 +337,24 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     #@assert !(0.0 in rates[1:end-1]) "rates = $rates, findnext(x -> x == 0.0, rates, 1) = $(findnext(x -> x == 0.0, rates, 1))"
 
     total_crystal_rate = (length(rates) > 0) ? sum(rates) : 0.0
-    kmc.dt = 1 / total_crystal_rate
+    kmc.dt = min(kmc.max_Δt, 1 / total_crystal_rate)
     push!(rates, 1/kmc.dt)
     push!(event_handlers, (transfer_heat!, (bc!,)))
 
     (rates=rates, event_handlers=event_handlers)
 end
 
-function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int)
+function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int, nhat_idx::Int)
     @assert !kmc.χ[i, j]
     kmc.χ[i, j] = true
+    kmc.nhat[i, j] = nhat_idx
     kmc.T[i, j] += kmc.ΔT
 end
 
 function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert kmc.χ[i, j]
     kmc.χ[i, j] = false
+    kmc.nhat[i, j] = rand(1:ndirs(kmc))
     kmc.T[i, j] -= kmc.ΔT
 end
 
@@ -330,7 +364,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int})
     else
         kmc.T[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.T0
     end
-    kmc.Ci[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.C0
+    kmc.Cρ[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.Cρ0
+    kmc.k[irange, (kmc.jbed+1):(end-kmc.jair)] .= kmc.k0
     kmc.active[irange, (kmc.jbed+1):(end-kmc.jair)] .= true
 end
 
@@ -348,6 +383,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
         deposit!(kmc, (kmc.ihead+1):new_ihead)
         kmc.ihead = new_ihead
     end
+    return Δt
 end
 
 @parallel_indices (i) function bc_top_neumann!(T)
@@ -401,8 +437,8 @@ end
 function main2(pargs)
 
     maxiter = pargs["maxiter"]
-    iterout = pargs["iterout"]
-    iterplot = pargs["iterplot"]
+    timeout = pargs["timeout"]
+    timeplot = pargs["timeplot"]
     maxtime = pargs["maxtime"]
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
@@ -411,6 +447,8 @@ function main2(pargs)
     A = pargs["KA"]
     @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     Tc = pargs["Tc"]
+    Tg = pargs["Tg"]
+    M = pargs["M"]
     ΔT = pargs["dT"]
     ni = pargs["ni"]
     nj = pargs["nj"]
@@ -419,6 +457,7 @@ function main2(pargs)
     l0 = pargs["l0"]
     v0 = pargs["v0"]
     maxdt = pargs["max-dt"]
+    maxΔt = pargs["max-Deltat"]
     ℓx = pargs["lx"]
     ℓy = pargs["ly"]
     dx = ℓx/(ni-1)                  
@@ -432,12 +471,15 @@ function main2(pargs)
     Cbed, C0, Cair = pargs["Cpbed"], pargs["Cp0"], pargs["Cpair"]
     kbed, k0, kair = pargs["kbed"], pargs["k0"], pargs["kair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
-    J = pargs["J"]
+    @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
+    ndirs = pargs["ndirs"]
     clims = (Tair, T0)
 
-    kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
+    kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, maxΔt,
+                            A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, 
-                            Tbed, T0, Tair, i0, v0, J, init_solver(pargs))
+                            Tbed, T0, Tair, i0, v0, J, ndirs, 
+                            init_solver(pargs))
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
@@ -453,15 +495,20 @@ function main2(pargs)
     push!(T_series, sum(kmc.T) / length(kmc.T))
     push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
+    time_since_out = 0.0
+    time_since_plot = 0.0
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
-        do_event!(kmc, bc_curry!)
-        if (iter % iterout == 0)
+        Δt = do_event!(kmc, bc_curry!)
+        time_since_out += Δt
+        time_since_plot += Δt
+        if (time_since_out > timeout)
             push!(t_series, kmc.t)
             push!(T_series, sum(kmc.T) / length(kmc.T))
             push!(α_series, sum(kmc.χ) / sum(kmc.active))
+            time_since_out = 0.0
         end
-        if (iter % iterplot == 0)
+        if (time_since_plot > timeplot)
             p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
             title!("Temperature")
             savefig(figname*"_temp-$iter.$figtype")
@@ -470,7 +517,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1]))
+            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]))
             title!("Crystallization")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
@@ -478,6 +525,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
+            time_since_plot = 0.0
         end
         if (time() - last_update > 15)
             last_update = time()
