@@ -25,6 +25,7 @@ else
     @init_parallel_stencil(Threads, Float64, 2);
 end
 
+#@parallel memopt=true function diffusion2D_step!(dT, T, k, Cρ, _dx, _dy)
 @parallel function diffusion2D_step!(dT, T, k, Cρ, _dx, _dy)
     @inn(dT) = ( (@d_xi(k)*@d_xi(T) + @inn(k)*@d2_xi(T))*_dx^2 + 
                  (@d_yi(k)*@d_yi(T) + @inn(k)*@d2_yi(T))*_dy^2   ) / @inn(Cρ)
@@ -60,7 +61,7 @@ s = ArgParseSettings();
   "--M"
     help = "Rotational mobility constant"
     arg_type = Float64 
-    default = 1000.0
+    default = 1.0
   "--J"
     help = "Interaction potential in activation energy (J / mol) between neighbors"
     arg_type = Float64 
@@ -143,7 +144,7 @@ s = ArgParseSettings();
   "--max-Deltat"
     help = "maximum time step for kmc (s)"
     arg_type = Float64
-    default = 1e-2
+    default = 1e-1
   "--tint-algo"
     help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
     arg_type = String
@@ -294,7 +295,7 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     end
 end
 
-function num_crystal_nbrs(kmc, i, j, ni, nj)
+function status_crystal_nbrs(kmc, i, j, ni, nj)
     (
          ((i > 1) ?  dot(kmc.χ[i-1, j]*kmc.pvecs[kmc.nhat[i-1, j]], 
                          kmc.pvecs[kmc.nhat[i, j]]) : 0) +
@@ -311,7 +312,8 @@ ndirs(kmc) = size(kmc.pvecs, 2)
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
-    nevents = ndirs(kmc)*ni*nj + 1
+    nsites = ni*nj
+    nevents = 2*nsites + 1
     event_handlers = Vector{Any}(undef, nevents)
     rates = zeros(nevents)
 
@@ -319,18 +321,19 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
         Threads.@threads for i=1:ni
             if !kmc.active[i, j]; continue; end
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
-                for k in 1:ndirs(kmc)
-                    idx = (k-1)*ni*nj + (j-1)*ni + i
-                    kmc.nhat[i, j] = k
-                    nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
-                    dEA = kmc.J*nnbrχ
-                    rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
-                    event_handlers[idx] = (crystallize!, (i, j, k))
+                idx = (j-1)*ni + i
+                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                dEA = kmc.J*nbrχ
+                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
+                event_handlers[idx] = (crystallize!, (i, j))
+                if kmc.T[i, j] > kmc.Tg
+                    rates[idx+nsites] = exp(-kmc.M*(kmc.Tc - kmc.T[i, j]) / (kmc.T[i, j] - kmc.Tg))
+                    event_handlers[idx+nsites] = (reorient!, (i, j, rand(1:ndirs(kmc))))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
                 idx = (j-1)*ni + i
-                nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
-                dEA = kmc.J*nnbrχ
+                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                dEA = kmc.J*nbrχ
                 rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
@@ -338,18 +341,22 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     end
     #@assert !(0.0 in rates[1:end-1]) "rates = $rates, findnext(x -> x == 0.0, rates, 1) = $(findnext(x -> x == 0.0, rates, 1))"
 
-    total_crystal_rate = (length(rates) > 0) ? sum(rates) : 0.0
-    kmc.dt = min(kmc.max_Δt, 1 / total_crystal_rate)
-    push!(rates, 1/kmc.dt)
-    push!(event_handlers, (transfer_heat!, (bc!,)))
+    total_other_events_rate = (length(rates) > 0) ? sum(rates) : 0.0
+    kmc.dt = min(kmc.max_Δt, 1 / total_other_events_rate)
+    rates[end] = 1/kmc.dt
+    event_handlers[end] = (transfer_heat!, (bc!,))
 
     (rates=rates, event_handlers=event_handlers)
 end
 
-function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int, nhat_idx::Int)
+function reorient!(kmc::KineticMonteCarlo, i::Int, j::Int, nhat_idx::Int)
+    @assert !kmc.χ[i, j]
+    kmc.nhat[i, j] = nhat_idx
+end
+
+function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert !kmc.χ[i, j]
     kmc.χ[i, j] = true
-    kmc.nhat[i, j] = nhat_idx
     kmc.T[i, j] += kmc.ΔT
 end
 
@@ -490,6 +497,11 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
+    pal = if 2 <= ndirs <= 11
+        Symbol("Paired_$(ndirs+1)")
+    else
+        :default
+    end
     clims = (Tair, T0)
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, maxΔt,
@@ -531,15 +543,15 @@ function main2(pargs)
         end
         if (time_since_plot > timeplot)
             p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
-            title!("Temperature")
+            title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
                 println("Enter to quit")
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]))
-            title!("Crystallization")
+            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal)
+            title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
                 println("Enter to quit")
