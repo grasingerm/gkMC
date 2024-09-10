@@ -125,6 +125,9 @@ s = ArgParseSettings();
     help = "air layer thickness (cm)"
     arg_type = Float64
     default = 3.00
+  "--top-insulated"
+    help = "flag for whether top is insulated or open (i.e. not insulated)"
+    action = :store_true
   "--l0"
       help = "initial filament (cm)"
     arg_type = Float64
@@ -419,11 +422,26 @@ end
     return
 end
 
-function bc_p!(T, Tb, jbedbot, jbedtop, Tair, jair)
+function bc_p_insulated!(T, Tb, jbedbot, jbedtop, Tair, jair)
     ni, nj = size(T)
 
     # insulated at the top and sides
     @parallel (1:ni) bc_horizontal_neumann!(T, 0, nj, 1)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
+    
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
+end
+
+function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
+    ni, nj = size(T)
+
+    # insulated at the top and sides
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tair, nj)
     @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
     @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
     
@@ -481,7 +499,11 @@ function main2(pargs)
                             Tbed, T0, Tair, i0, v0, J, ndirs, 
                             init_solver(pargs))
 
-    bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
+    bc_curry!(T) = if pargs["top-insulated"]
+        bc_p_insulated!(T, Tbed, 1, jbed, Tair, nj)
+    else
+        bc_p_open!(T, Tbed, 1, jbed, Tair, nj)
+    end
 
     t_series = [];
     T_series = [];
