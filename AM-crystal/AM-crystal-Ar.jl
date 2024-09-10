@@ -3,7 +3,7 @@ import Base.CartesianIndex
 import PhysicalConstants
 using Unitful
 using ArgParse;
-using Plots; pyplot()
+using Plots; pythonplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile

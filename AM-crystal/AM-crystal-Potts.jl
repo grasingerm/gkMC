@@ -3,7 +3,7 @@ import Base.CartesianIndex
 import PhysicalConstants
 using Unitful
 using ArgParse;
-using Plots; pyplot()
+using Plots; pythonplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile
@@ -143,9 +143,9 @@ s = ArgParseSettings();
   "--max-Deltat"
     help = "maximum time step for kmc (s)"
     arg_type = Float64
-    default = 1e-3
+    default = 1e-2
   "--tint-algo"
-    help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method"
+    help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
     arg_type = String
     default = "Tsit5"
   "--tint-reltol"
@@ -157,19 +157,19 @@ s = ArgParseSettings();
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
-    default = convert(Int, 1e7)
+    default = convert(Int, 1e8)
   "--maxtime", "-t"
     help = "maximum simulation time"
     arg_type = Float64
-    default = 6e1
+    default = 6e2
   "--timeout"
     help = "Time per output (s)"
     arg_type = Float64
-    default = 1e-2
+    default = 1e-0
   "--timeplot"
     help = "Time per plot (s)"
     arg_type = Float64
-    default = 1e-2
+    default = 1e-0
   "--figname"
     help = "figure name"
     arg_type = String
@@ -279,7 +279,6 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     lambda_int(Δt) = begin
         prob = ODEProblem((dT, T, p, t) -> begin
             @parallel diffusion2D_step!(dT, kmc.T, kmc.k, kmc.Cρ, 1/kmc.dx, 1/kmc.dy)
-            bc!(kmc.T)
         end, kmc.T, (0.0, Δt))
         kmc.solver(prob)
     end
