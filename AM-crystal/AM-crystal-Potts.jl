@@ -305,7 +305,7 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
                          kmc.pvecs[kmc.nhat[i, j]]) : 0) +
          ((j < nj) ? dot(kmc.χ[i, j+1]*kmc.pvecs[kmc.nhat[i, j+1]], 
                          kmc.pvecs[kmc.nhat[i, j]]) : 0)
-    )
+    ) / 4.0
 end
 
 ndirs(kmc) = size(kmc.pvecs, 2)
@@ -322,19 +322,25 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
             if !kmc.active[i, j]; continue; end
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
                 dEA = kmc.J*nbrχ
-                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
+                rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.Tc - kmc.T[i, j]))
                 event_handlers[idx] = (crystallize!, (i, j))
                 if kmc.T[i, j] > kmc.Tg
-                    rates[idx+nsites] = exp(-kmc.M*(kmc.Tc - kmc.T[i, j]) / (kmc.T[i, j] - kmc.Tg))
-                    event_handlers[idx+nsites] = (reorient!, (i, j, rand(1:ndirs(kmc))))
+                    dθ = rand([-1; 1])
+                    nhat = kmc.pvecs[kmc.nhat[i, j]] += dθ
+                    old_nbrχ = 1 - nbrχ
+                    new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                    kmc.pvecs[kmc.nhat[i, j]] -= dθ # reset
+                    dE = -kmc.J * (new_nbrχ - nbrχ)
+                    rates[idx+nsites] = exp(-kmc.M * dE / (kmc.T[i, j] - kmc.Tg))
+                    event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
                 dEA = kmc.J*nbrχ
-                rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.T[i, j] - kmc.Tc))
+                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
         end
@@ -574,7 +580,7 @@ function main2(pargs)
     push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     if doplot
-        p = plot(t_series, χ_series)
+        p = plot(t_series, α_series)
         xlabel!("time")
         ylabel!("crystallizaiton %")
         ylims!(0.0, 1.0)

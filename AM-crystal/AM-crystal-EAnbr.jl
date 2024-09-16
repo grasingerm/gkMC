@@ -416,7 +416,7 @@ function main2(pargs)
     push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     if doplot
-        p = plot(t_series, χ_series)
+        p = plot(t_series, α_series)
         xlabel!("time")
         ylabel!("crystallizaiton %")
         ylims!(0.0, 1.0)
