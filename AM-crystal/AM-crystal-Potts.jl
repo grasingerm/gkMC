@@ -328,10 +328,16 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                 event_handlers[idx] = (crystallize!, (i, j))
                 if kmc.T[i, j] > kmc.Tg
                     dθ = rand([-1; 1])
-                    nhat = kmc.pvecs[kmc.nhat[i, j]] += dθ
+                    nhat = if kmc.nhat[i, j] + dθ < 1
+                        kmc.nhat[i, j] += (dθ + ndirs(kmc))
+                    elseif kmc.nhat[i, j] + dθ > ndirs(kmc)
+                        kmc.nhat[i, j] = (kmc.nhat[i, j] + dθ) % ndirs(kmc)
+                    else
+                        kmc.nhat[i, j] += dθ
+                    end
                     old_nbrχ = 1 - nbrχ
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
-                    kmc.pvecs[kmc.nhat[i, j]] -= dθ # reset
+                    kmc.nhat[i, j] -= dθ # reset
                     dE = -kmc.J * (new_nbrχ - nbrχ)
                     rates[idx+nsites] = exp(-kmc.M * dE / (kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
