@@ -185,6 +185,10 @@ s = ArgParseSettings();
   "--showplot"
     help = "show plots"
     action = :store_true
+  "--plotsize"
+    help = "Size of plot (px)"
+    arg_type = Int
+    default = 800
 end
 
 pargs = parse_args(s);
@@ -479,6 +483,7 @@ function main2(pargs)
     maxtime = pargs["maxtime"]
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
+    plotsize = pargs["plotsize"]
     figname = pargs["figname"]
     figtype = pargs["figtype"]
     A = pargs["KA"]
@@ -510,12 +515,19 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
-    pal = if 2 <= ndirs <= 11
+    pal = :RdPu 
+    #=pal = if 2 <= ndirs <= 11
         Symbol("Paired_$(ndirs+1)")
     else
         :default
     end
+    =#
     clims = (Tair, T0)
+    plot_len, plot_width = if ℓx > ℓy
+	    plot_size, round(Int, plot_size*ℓy/ℓx)
+    else
+	    round(Int, plot_size*ℓx/ℓy), plot_size
+    end
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
@@ -555,7 +567,7 @@ function main2(pargs)
             time_since_out = 0.0
         end
         if (time_since_plot > timeplot)
-            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
+	    p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
@@ -563,7 +575,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal)
+            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal, size=(plot_len, plot_width))
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
