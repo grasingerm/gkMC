@@ -185,6 +185,10 @@ s = ArgParseSettings();
   "--showplot"
     help = "show plots"
     action = :store_true
+  "--plotsize"
+    help = "Size of plot (px)"
+    arg_type = Int
+    default = 800
 end
 
 pargs = parse_args(s);
@@ -327,6 +331,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                 rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.Tc - kmc.T[i, j]))
                 event_handlers[idx] = (crystallize!, (i, j))
                 if kmc.T[i, j] > kmc.Tg
+		    nhat_prev = kmc.nhat[i, j]
                     dθ = rand([-1; 1])
                     nhat = if kmc.nhat[i, j] + dθ < 1
                         kmc.nhat[i, j] += (dθ + ndirs(kmc))
@@ -337,7 +342,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                     end
                     old_nbrχ = 1 - nbrχ
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
-                    kmc.nhat[i, j] -= dθ # reset
+                    kmc.nhat[i, j] = nhat_prev # reset
                     dE = -kmc.J * (new_nbrχ - nbrχ)
                     rates[idx+nsites] = exp(-kmc.M * dE / (kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
@@ -478,6 +483,7 @@ function main2(pargs)
     maxtime = pargs["maxtime"]
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
+    plotsize = pargs["plotsize"]
     figname = pargs["figname"]
     figtype = pargs["figtype"]
     A = pargs["KA"]
@@ -509,12 +515,19 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
-    pal = if 2 <= ndirs <= 11
+    pal = :RdPu 
+    #=pal = if 2 <= ndirs <= 11
         Symbol("Paired_$(ndirs+1)")
     else
         :default
     end
+    =#
     clims = (Tair, T0)
+    plot_len, plot_width = if ℓx > ℓy
+	    plot_size, round(Int, plot_size*ℓy/ℓx)
+    else
+	    round(Int, plot_size*ℓx/ℓy), plot_size
+    end
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
@@ -554,7 +567,7 @@ function main2(pargs)
             time_since_out = 0.0
         end
         if (time_since_plot > timeplot)
-            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
+	    p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
@@ -562,7 +575,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal)
+            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal, size=(plot_len, plot_width))
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
