@@ -483,7 +483,7 @@ function main2(pargs)
     maxtime = pargs["maxtime"]
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
-    plotsize = pargs["plotsize"]
+    plot_size = pargs["plotsize"]
     figname = pargs["figname"]
     figtype = pargs["figtype"]
     A = pargs["KA"]
