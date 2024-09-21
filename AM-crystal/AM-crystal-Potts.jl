@@ -3,7 +3,8 @@ import Base.CartesianIndex
 import PhysicalConstants
 using Unitful
 using ArgParse;
-using Plots; pythonplot()
+using Plots; 
+#pythonplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile
@@ -14,6 +15,7 @@ using OrdinaryDiffEq
 using ODEInterfaceDiffEq
 using Distributions
 using LinearAlgebra
+using ColorSchemes, Colors
 
 const USE_GPU = false
 import MPI
@@ -312,7 +314,7 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
     ) / 4.0
 end
 
-ndirs(kmc) = size(kmc.pvecs, 2)
+get_ndirs(kmc) = size(kmc.pvecs, 2)
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
@@ -334,9 +336,9 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                     nhat_temp = kmc.nhat[i, j]
                     dθ = rand([-1; 1])
                     nhat = if kmc.nhat[i, j] + dθ < 1
-                        kmc.nhat[i, j] += (dθ + ndirs(kmc))
-                    elseif kmc.nhat[i, j] + dθ > ndirs(kmc)
-                        kmc.nhat[i, j] = (kmc.nhat[i, j] + dθ) % ndirs(kmc)
+                        kmc.nhat[i, j] += (dθ + get_ndirs(kmc))
+                    elseif kmc.nhat[i, j] + dθ > get_ndirs(kmc)
+                        kmc.nhat[i, j] = (kmc.nhat[i, j] + dθ) % get_ndirs(kmc)
                     else
                         kmc.nhat[i, j] += dθ
                     end
@@ -380,7 +382,7 @@ end
 function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert kmc.χ[i, j]
     kmc.χ[i, j] = false
-    kmc.nhat[i, j] = rand(1:ndirs(kmc))
+    kmc.nhat[i, j] = rand(1:get_ndirs(kmc))
     kmc.T[i, j] -= kmc.ΔT
 end
 
@@ -515,7 +517,8 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
-    pal = :RdPu 
+    pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
+    #pal = :RdPu 
     #=pal = if 2 <= ndirs <= 11
         Symbol("Paired_$(ndirs+1)")
     else
@@ -523,6 +526,7 @@ function main2(pargs)
     end
     =#
     clims = (Tair, T0)
+    climsχ = (1 - (ndirs+1)/2, ndirs - ((ndirs+1)/2))
     plot_len, plot_width = if ℓx > ℓy
 	    plot_size, round(Int, plot_size*ℓy/ℓx)
     else
@@ -567,7 +571,7 @@ function main2(pargs)
             time_since_out = 0.0
         end
         if (time_since_plot > timeplot)
-	    p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
+            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
@@ -575,7 +579,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal, size=(plot_len, plot_width))
+            p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width), clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
