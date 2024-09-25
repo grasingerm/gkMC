@@ -579,7 +579,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width), clims=climsχ)
+	    p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
@@ -587,6 +587,8 @@ function main2(pargs)
                 display(p)
                 readline()
             end
+	    writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T[:, :, 1]), ',')
+	    writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)), ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
@@ -622,7 +624,7 @@ function main2(pargs)
             display(p)
             readline()
         end
-        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series))
+        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series), ',')
     end
 
     kmc
