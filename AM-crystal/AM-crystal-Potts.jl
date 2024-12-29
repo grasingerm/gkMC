@@ -305,7 +305,7 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
                          kmc.pvecs[kmc.nhat[i, j]]) : 0) +
          ((j < nj) ? dot(kmc.χ[i, j+1]*kmc.pvecs[kmc.nhat[i, j+1]], 
                          kmc.pvecs[kmc.nhat[i, j]]) : 0)
-    )
+    ) / 4.0
 end
 
 ndirs(kmc) = size(kmc.pvecs, 2)
