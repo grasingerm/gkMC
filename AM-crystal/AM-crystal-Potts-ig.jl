@@ -529,7 +529,8 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
-    pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
+    #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
+    pal = palette(:broc)
     #pal = :RdPu 
     #=pal = if 2 <= ndirs <= 11
         Symbol("Paired_$(ndirs+1)")
@@ -591,7 +592,9 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-	    p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
+            χmult = map(x -> (x == 0) ? -1 : 1, kmc.χ[:, :, 1])
+            #p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
+            p = heatmap(permutedims(χmult .* kmc.nhat[:, :, 1]); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
