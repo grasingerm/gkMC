@@ -69,6 +69,10 @@ s = ArgParseSettings();
     help = "Interaction potential in activation energy (J / mol) between neighbors"
     arg_type = Float64 
     default = 1316.0
+  "--Jm"
+    help = "Interaction potential in reorientation (J / mol) between neighbors"
+    arg_type = Float64 
+    default = 130.0
   "--ndirs"
     help = "Number of discrete crystal plane directions"
     arg_type = Int 
@@ -312,6 +316,7 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     end
 end
 
+#=
 function status_crystal_nbrs(kmc, i, j, ni, nj)
     (
          ((i > 1) ?  dot(kmc.χ[i-1, j]*kmc.pvecs[kmc.nhat[i-1, j]], 
@@ -323,6 +328,20 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
          ((j < nj) ? dot(kmc.χ[i, j+1]*kmc.pvecs[kmc.nhat[i, j+1]], 
                          kmc.pvecs[kmc.nhat[i, j]]) : 0)
     ) / 4.0
+end
+=#
+
+function status_crystal_nbrs(kmc, i, j, ni, nj)
+    (
+         ((i > 1) ?  (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((i < ni) ? (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((j > 1) ?  (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((j < nj) ? (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
+    ) / 8.0
 end
 
 get_ndirs(kmc) = size(kmc.pvecs, 2)
@@ -356,8 +375,9 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                     old_nbrχ = 1 - nbrχ
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
-                    dE = -kmc.J * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = exp(-kmc.M * dE / (kmc.T[i, j] - kmc.Tg))
+                    dE = -kmc.J * (new_nbrχ - nbrχ) / 10.0
+                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - kmc.J/(kmc.T[i, j] - kmc.Tg))
+                    #rates[idx+nsites] = kmc.M*exp(-1/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
@@ -539,7 +559,7 @@ function main2(pargs)
     end
     =#
     clims = (Tair, T0)
-    climsχ = (1 - (ndirs+1)/2, ndirs - ((ndirs+1)/2))
+    climsχ = (-ndirs-1, ndirs+1)
     plot_len, plot_width = if ℓx > ℓy
 	    plot_size, round(Int, plot_size*ℓy/ℓx)
     else
@@ -584,7 +604,7 @@ function main2(pargs)
             time_since_out = 0.0
         end
         if (time_since_plot > timeplot)
-            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
+            p = heatmap(permutedims(kmc.T[:, :]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
@@ -592,9 +612,18 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            χmult = map(x -> (x == 0) ? -1 : 1, kmc.χ[:, :, 1])
+            χmult = map(x -> (x == 0) ? -1 : 1, kmc.χ[:, :])
+            χadd = map(x -> begin
+                           if !x[2]
+                               return 0
+                           elseif (x[1] == 0)
+                               return -1
+                           else
+                               return 1
+                           end
+                       end, zip(kmc.χ, kmc.active))
             #p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
-            p = heatmap(permutedims(χmult .* kmc.nhat[:, :, 1]); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
+            p = heatmap(permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)); c=pal, size=(plot_len, plot_width), clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
@@ -602,8 +631,8 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-	    writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T[:, :, 1]), ',')
-	    writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)), ',')
+            writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T), ',')
+            writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)), ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
