@@ -3,7 +3,8 @@ import Base.CartesianIndex
 import PhysicalConstants
 using Unitful
 using ArgParse;
-using Plots; pythonplot()
+using Plots; 
+#pythonplot()
 using LaTeXStrings
 using SpecialFunctions
 using Profile
@@ -14,6 +15,7 @@ using OrdinaryDiffEq
 using ODEInterfaceDiffEq
 using Distributions
 using LinearAlgebra
+using ColorSchemes, Colors
 
 const USE_GPU = false
 import MPI
@@ -185,6 +187,10 @@ s = ArgParseSettings();
   "--showplot"
     help = "show plots"
     action = :store_true
+  "--plotsize"
+    help = "Size of plot (px)"
+    arg_type = Int
+    default = 800
 end
 
 pargs = parse_args(s);
@@ -308,7 +314,7 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
     ) / 4.0
 end
 
-ndirs(kmc) = size(kmc.pvecs, 2)
+get_ndirs(kmc) = size(kmc.pvecs, 2)
 
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
@@ -322,19 +328,31 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
             if !kmc.active[i, j]; continue; end
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
-                dEA = kmc.J*nbrχ
-                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
+                nbrχ = (2 - status_crystal_nbrs(kmc, i, j, ni, nj))
+                rates[idx] = kmc.A*exp(-(kmc.J*nbrχ*kmc.EA)/(kmc.Tc - kmc.T[i, j]))
                 event_handlers[idx] = (crystallize!, (i, j))
                 if kmc.T[i, j] > kmc.Tg
-                    rates[idx+nsites] = exp(-kmc.M*(kmc.Tc - kmc.T[i, j]) / (kmc.T[i, j] - kmc.Tg))
-                    event_handlers[idx+nsites] = (reorient!, (i, j, rand(1:ndirs(kmc))))
+                    nhat_temp = kmc.nhat[i, j]
+                    dθ = rand([-1; 1])
+                    nhat = if kmc.nhat[i, j] + dθ < 1
+                        kmc.nhat[i, j] += (dθ + get_ndirs(kmc))
+                    elseif kmc.nhat[i, j] + dθ > get_ndirs(kmc)
+                        kmc.nhat[i, j] = (kmc.nhat[i, j] + dθ) % get_ndirs(kmc)
+                    else
+                        kmc.nhat[i, j] += dθ
+                    end
+                    old_nbrχ = 2 - nbrχ
+                    new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                    kmc.nhat[i, j] = nhat_temp # reset
+                    dE = -kmc.J * kmc.EA * (new_nbrχ - nbrχ)
+                    rates[idx+nsites] = exp(-kmc.M * dE / (kmc.T[i, j] - kmc.Tg))
+                    event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
                 dEA = kmc.J*nbrχ
-                rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.T[i, j] - kmc.Tc))
+                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
         end
@@ -363,7 +381,7 @@ end
 function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert kmc.χ[i, j]
     kmc.χ[i, j] = false
-    kmc.nhat[i, j] = rand(1:ndirs(kmc))
+    kmc.nhat[i, j] = rand(1:get_ndirs(kmc))
     kmc.T[i, j] -= kmc.ΔT
 end
 
@@ -466,6 +484,7 @@ function main2(pargs)
     maxtime = pargs["maxtime"]
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
+    plot_size = pargs["plotsize"]
     figname = pargs["figname"]
     figtype = pargs["figtype"]
     A = pargs["KA"]
@@ -497,12 +516,21 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
-    pal = if 2 <= ndirs <= 11
+    pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
+    #pal = :RdPu 
+    #=pal = if 2 <= ndirs <= 11
         Symbol("Paired_$(ndirs+1)")
     else
         :default
     end
+    =#
     clims = (Tair, T0)
+    climsχ = (1 - (ndirs+1)/2, ndirs - ((ndirs+1)/2))
+    plot_len, plot_width = if ℓx > ℓy
+	    plot_size, round(Int, plot_size*ℓy/ℓx)
+    else
+	    round(Int, plot_size*ℓx/ℓy), plot_size
+    end
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jair, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
@@ -542,7 +570,7 @@ function main2(pargs)
             time_since_out = 0.0
         end
         if (time_since_plot > timeplot)
-            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims)
+            p = heatmap(permutedims(kmc.T[:, :, 1]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_temp-$iter.$figtype")
             if showplot
@@ -550,7 +578,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(kmc.χ[:, :, 1] .* kmc.nhat[:, :, 1]); c=pal)
+	    p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_crystal-$iter.$figtype")
             if showplot
@@ -558,6 +586,8 @@ function main2(pargs)
                 display(p)
                 readline()
             end
+	    writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T[:, :, 1]), ',')
+	    writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)), ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
@@ -574,7 +604,7 @@ function main2(pargs)
     push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     if doplot
-        p = plot(t_series, χ_series)
+        p = plot(t_series, α_series)
         xlabel!("time")
         ylabel!("crystallizaiton %")
         ylims!(0.0, 1.0)
@@ -593,7 +623,7 @@ function main2(pargs)
             display(p)
             readline()
         end
-        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series))
+        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series), ',')
     end
 
     kmc

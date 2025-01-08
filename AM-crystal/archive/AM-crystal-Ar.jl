@@ -47,13 +47,9 @@ s = ArgParseSettings();
     arg_type = Float64
     default = 616.0
   "--EA"
-    help = "Activation energy (J / mol); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
+  help = "Activation energy (J / mol); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64 
     default = 1316.0
-  "--EAnbr"
-    help = "Reduction in activation energy (J / mol) per crystalline neighbor"
-    arg_type = Float64 
-    default = 50.0
   "--KA"
     help = "Crystallization rate constant; default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64 
@@ -163,15 +159,13 @@ mutable struct KineticMonteCarlo
     jbed::Int
     jair::Int
     C0::Float64
-    EAnbr::Float64
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jair::Int, dt::Real, max_dt::Real, 
                            A::Real, EA::Real, Tc::Real, ΔT::Real, lam::Real, 
                            Cbed::Real, C0::Real, Cair::Real,
-                           Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real,
-                           EAnbr::Real)
+                           Tbed::Real, T0::Real, Tair::Real, i0::Int, v0::Real)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
     active = fill(false, ni, nj)
@@ -185,7 +179,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     Ci[:, (jbed+1):end] .= Cair
     Ci[1:i0, (jbed+1):(end-jair)] .= C0
     KineticMonteCarlo(0.0, dt, max_dt, χ, active, A, EA, Tc, ΔT, T, Ci, lam, 
-                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, C0, EAnbr)
+                      dx, ℓx, dy, ℓy, i0, i0, T0, v0, jbed, jair, C0)
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
@@ -200,15 +194,6 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     bc!(kmc.T)
 end
 
-function num_crystal_nbrs(kmc, i, j, ni, nj)
-    return (
-             ((i > 1) ? convert(Int, kmc.χ[i-1, j]) : 0) +
-             ((i < ni) ? convert(Int, kmc.χ[i+1, j]) : 0) +
-             ((j > 1) ? convert(Int, kmc.χ[i, j-1]) : 0) +
-             ((j < nj) ? convert(Int, kmc.χ[i, j+1]) : 0)
-           )
-end
-
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     ni, nj = size(kmc.χ)
     nevents = ni*nj + 1
@@ -219,13 +204,11 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
         Threads.@threads for i=1:ni
             if !kmc.active[i, j]; continue; end
             idx = (j-1)*ni + i
-            nnbrχ = num_crystal_nbrs(kmc, i, j, ni, nj)
-            dEA = kmc.EAnbr*nnbrχ
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
-                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.Tc - kmc.T[i, j]))
+                rates[idx] = kmc.A*exp(-kmc.EA/(kmc.Tc - kmc.T[i, j]))
                 event_handlers[idx] = (crystallize!, (i, j))
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
-                rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.T[i, j] - kmc.Tc))
+                rates[idx] = kmc.A*exp(-kmc.EA/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
         end
@@ -356,11 +339,10 @@ function main2(pargs)
     τc = 1e-0
     Cbed, C0, Cair = pargs["Cbed"], pargs["C0"], pargs["Cair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
-    EAnbr = pargs["EAnbr"]
     clims = (Tair, T0)
 
     kmc = KineticMonteCarlo(ℓ, h, d, h, jbed, jair, τc, maxdt, A, EA, Tc, ΔT, 
-                            lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0, EAnbr)
+                            lam, Cbed, C0, Cair, Tbed, T0, Tair, i0, v0)
 
     bc_curry!(T) = bc_p!(T, Tbed, 1, jbed, Tair, nj)
 
@@ -416,7 +398,7 @@ function main2(pargs)
     push!(α_series, sum(kmc.χ) / sum(kmc.active))
 
     if doplot
-        p = plot(t_series, χ_series)
+        p = plot(t_series, α_series)
         xlabel!("time")
         ylabel!("crystallizaiton %")
         ylims!(0.0, 1.0)
