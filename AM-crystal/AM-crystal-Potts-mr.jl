@@ -116,11 +116,11 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 301
+    default = 151
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 71
+    default = 26
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
@@ -128,7 +128,7 @@ s = ArgParseSettings();
   "--ly"
     help = "length in the y-direction (cm)"
     arg_type = Float64
-    default = 7.0
+    default = 5.0
   "--tbed"
     help = "thickness of bed (cm)"
     arg_type = Float64
@@ -250,6 +250,7 @@ mutable struct KineticMonteCarlo
     Cρ0::Float64
     k0::Float64
     J::Float64
+    Jm::Float64
     pvecs::Matrix
     solver::Function
 end
@@ -260,7 +261,8 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            Cbed::Real, C0::Real, Cair::Real,
                            kbed::Real, k0::Real, kair::Real,
                            Tbed::Real, T0::Real, Tair::Real, v0::Real,
-                           J::Real, ndirs::Int, σ_init::Float64, solver::Function)
+                           J::Real, Jm::Real, ndirs::Int, σ_init::Float64, 
+                           solver::Function)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
     # randomly initialize polymer directions based on truncated Gaussian
@@ -289,7 +291,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
                       dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, true, T0, v0, jbed, C0, 
-                      k0, J, pvecs, solver
+                      k0, J, Jm, pvecs, solver
                      )
 end
 
@@ -314,6 +316,7 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     end
 end
 
+#=
 function status_crystal_nbrs(kmc, i, j, ni, nj)
     (
          ((i > 1) ?  (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
@@ -323,6 +326,20 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
          ((j > 1) ?  (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
                                          kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
          ((j < nj) ? (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
+    ) / 8.0
+end
+=#
+
+function status_crystal_nbrs(kmc, i, j, ni, nj)
+    (
+         ((i > 1) ?  ((dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((i < ni) ? ((dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((j > 1) ?  ((dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+         ((j < nj) ? ((dot(kmc.pvecs[kmc.nhat[i, j+1]], 
                                          kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
     ) / 8.0
 end
@@ -358,8 +375,8 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                     old_nbrχ = 1 - nbrχ
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
-                    dE = -kmc.J * (new_nbrχ - nbrχ) / 10.0
-                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - kmc.J/(kmc.T[i, j] - kmc.Tg))
+                    dE = -kmc.Jm * (new_nbrχ - nbrχ)
+                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - kmc.Jm/(kmc.T[i, j] - kmc.Tg))
                     #rates[idx+nsites] = kmc.M*exp(-1/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
@@ -402,7 +419,6 @@ end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int}, 
                   jrange::UnitRange{Int})
-    @info("depositing $irange, $jrange")
     if irange.start > 1
         kmc.T[(irange.start-1):irange.stop, jrange] .= kmc.T0
     else
@@ -426,6 +442,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
     ni, nj = size(kmc.T)
     if kmc.jhead.stop <= nj
         if kmc.lrhead
+            new_ihead = min(round(Int, kmc.v0*kmc.trow / kmc.dx), ni)
             if new_ihead > kmc.ihead
                 deposit!(kmc, (kmc.ihead+1):new_ihead, kmc.jhead)
                 kmc.ihead = new_ihead
@@ -437,6 +454,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.trow = 0
             end
         else
+            new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
             if new_ihead < kmc.ihead
                 deposit!(kmc, new_ihead:(kmc.ihead-1), kmc.jhead)
                 kmc.ihead = new_ihead
@@ -553,6 +571,7 @@ function main2(pargs)
     kbed, k0, kair = pargs["kbed"], pargs["k0"], pargs["kair"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
+    @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     ndirs = pargs["ndirs"]
     #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
     pal = palette(:broc)
@@ -574,7 +593,7 @@ function main2(pargs)
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, 
-                            Tbed, T0, Tair, v0, J, ndirs, σ_init,
+                            Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init,
                             init_solver(pargs))
 
     bc_curry!(T) = if pargs["top-insulated"]
