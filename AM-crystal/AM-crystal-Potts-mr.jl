@@ -137,6 +137,10 @@ s = ArgParseSettings();
     help = "thickness of a single row (cm)"
     arg_type = Float64
     default = 2.00
+  "--maxrow"
+    help = "maximum number of rows"
+    arg_type = Int
+    default = 2
   "--top-insulated"
     help = "flag for whether top is insulated or open (i.e. not insulated)"
     action = :store_true
@@ -243,6 +247,7 @@ mutable struct KineticMonteCarlo
     ℓy::Float64
     ihead::Int
     jhead::UnitRange{Int}
+    maxrow::Int
     lrhead::Bool
     T0::Float64
     v0::Float64
@@ -261,7 +266,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            Cbed::Real, C0::Real, Cair::Real,
                            kbed::Real, k0::Real, kair::Real,
                            Tbed::Real, T0::Real, Tair::Real, v0::Real,
-                           J::Real, Jm::Real, ndirs::Int, σ_init::Float64, 
+                           J::Real, Jm::Real, ndirs::Int, σ_init::Float64, maxrow::Int,
                            solver::Function)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
@@ -290,7 +295,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
-                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, true, T0, v0, jbed, C0, 
+                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, true, T0, v0, jbed, C0, 
                       k0, J, Jm, pvecs, solver
                      )
 end
@@ -554,6 +559,7 @@ function main2(pargs)
     nj = pargs["nj"]
     tbed = pargs["tbed"]
     trow = pargs["trow"]
+    maxrow = pargs["maxrow"]
     v0 = pargs["v0"]
     maxdt = pargs["max-dt"]
     maxΔt = pargs["max-Deltat"]
@@ -593,7 +599,7 @@ function main2(pargs)
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, 
-                            Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init,
+                            Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
                             init_solver(pargs))
 
     bc_curry!(T) = if pargs["top-insulated"]
