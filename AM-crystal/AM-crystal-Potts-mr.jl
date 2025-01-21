@@ -248,6 +248,7 @@ mutable struct KineticMonteCarlo
     ihead::Int
     jhead::UnitRange{Int}
     maxrow::Int
+    nrow::Int
     lrhead::Bool
     T0::Float64
     v0::Float64
@@ -295,8 +296,8 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
-                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, true, T0, v0, jbed, C0, 
-                      k0, J, Jm, pvecs, solver
+                      dx, ℓx, dy, ℓy, 1, (jbed+1):jtop, maxrow, 0, true, T0, v0, 
+                      jbed, C0, k0, J, Jm, pvecs, solver
                      )
 end
 
@@ -445,7 +446,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
     kmc.t += Δt
     kmc.trow += Δt
     ni, nj = size(kmc.T)
-    if kmc.jhead.stop <= nj
+    if kmc.nrow <= kmc.maxrow && kmc.jhead.stop <= nj
         if kmc.lrhead
             new_ihead = min(round(Int, kmc.v0*kmc.trow / kmc.dx), ni)
             if new_ihead > kmc.ihead
@@ -457,6 +458,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = false
                 kmc.trow = 0
+                kcm.nrow += 1
             end
         else
             new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
@@ -469,6 +471,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = true
                 kmc.trow = 0
+                kcm.nrow += 1
             end
         end
     end
