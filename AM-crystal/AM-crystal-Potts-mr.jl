@@ -458,7 +458,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = false
                 kmc.trow = 0
-                kcm.nrow += 1
+                kmc.nrow += 1
             end
         else
             new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
@@ -471,7 +471,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = true
                 kmc.trow = 0
-                kcm.nrow += 1
+                kmc.nrow += 1
             end
         end
     end
