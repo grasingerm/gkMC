@@ -116,11 +116,11 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 151
+    default = 61
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 26
+    default = 15
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
@@ -128,7 +128,7 @@ s = ArgParseSettings();
   "--ly"
     help = "length in the y-direction (cm)"
     arg_type = Float64
-    default = 5.0
+    default = 7.0
   "--tbed"
     help = "thickness of bed (cm)"
     arg_type = Float64
@@ -144,10 +144,6 @@ s = ArgParseSettings();
   "--top-insulated"
     help = "flag for whether top is insulated or open (i.e. not insulated)"
     action = :store_true
-  #"--l0"
-  #    help = "initial filament (cm)"
-  #    arg_type = Float64
-  #    default = 2.00
   "--v0"
       help = "printer head velocity (cm / s)"
     arg_type = Float64
@@ -296,7 +292,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
-                      dx, ℓx, dy, ℓy, 1, (jbed+1):jtop, maxrow, 0, true, T0, v0, 
+                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 0, true, T0, v0, 
                       jbed, C0, k0, J, Jm, pvecs, solver
                      )
 end
@@ -459,6 +455,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.lrhead = false
                 kmc.trow = 0
                 kmc.nrow += 1
+                kmc.ihead += 1
             end
         else
             new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
@@ -472,6 +469,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.lrhead = true
                 kmc.trow = 0
                 kmc.nrow += 1
+                kmc.ihead -= 1
             end
         end
     end
@@ -541,6 +539,118 @@ function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
 end
 
+function coarse_grain(kmc::KineticMonteCarlo)
+    cgij = zeros(size(kmc.χ))
+    ni, nj = size(cgij)
+    for i=2:ni-1 
+        Threads.@threads for j=2:nj-1 # interior
+            @inbounds cgij[i,j] = if kmc.χ[i, j] == 0
+                0
+            else
+                (
+                    (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                        kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                    (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                        kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                    (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                        kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                    (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                        kmc.pvecs[kmc.nhat[i, j]])+1))
+                ) / 8.0
+            end
+        end
+    end
+
+    Threads.@threads for i=2:ni-1 # halo i
+        j = 1
+        @inbounds cgij[i, j] = if kmc.χ[i, j] == 0
+            0
+        else
+            (
+                (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1))
+            ) / 6.0
+        end
+
+        j = nj
+        @inbounds cgij[i, j] = if kmc.χ[i, j] == 0
+            0
+        else
+            (
+                (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1))
+            ) / 6.0
+        end
+    end
+
+    Threads.@threads for j=2:nj-1 # halo j
+        i = 1
+        @inbounds cgij[i, j] = if kmc.χ[i, j] == 0
+            0
+        else
+            (
+                (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) + 
+                (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1))
+            ) / 6.0
+        end
+
+        i = ni
+        @inbounds cgij[i, j] = if kmc.χ[i, j] == 0
+            0
+        else
+            (
+                (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1)) +
+                (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
+                                    kmc.pvecs[kmc.nhat[i, j]])+1))
+            ) / 6.0
+        end
+    end
+
+    # corners
+    cgij[1, 1] = kmc.χ[1, 1]*(
+                    (kmc.χ[1, 2]*(dot(kmc.pvecs[kmc.nhat[1, 2]], 
+                                      kmc.pvecs[kmc.nhat[1, 1]])+1)) +
+                    (kmc.χ[2, 1]*(dot(kmc.pvecs[kmc.nhat[2, 1]], 
+                                      kmc.pvecs[kmc.nhat[1, 1]])+1))
+                ) / 4.0
+    cgij[ni, 1] = kmc.χ[ni, 1]*(
+                    (kmc.χ[ni, 2]*(dot(kmc.pvecs[kmc.nhat[ni, 2]], 
+                                       kmc.pvecs[kmc.nhat[ni, 1]])+1)) +
+                    (kmc.χ[ni-1, 1]*(dot(kmc.pvecs[kmc.nhat[ni-1, 1]], 
+                                         kmc.pvecs[kmc.nhat[ni, 1]])+1))
+                ) / 4.0
+   cgij[1, nj] = kmc.χ[1, nj]*(
+                    (kmc.χ[1, nj-1]*(dot(kmc.pvecs[kmc.nhat[1, nj-1]], 
+                                         kmc.pvecs[kmc.nhat[1, nj]])+1)) +
+                    (kmc.χ[2, nj]*(dot(kmc.pvecs[kmc.nhat[2, nj]], 
+                                      kmc.pvecs[kmc.nhat[1, nj]])+1))
+                ) / 4.0
+   cgij[ni, nj] = kmc.χ[ni, nj]*(
+                    (kmc.χ[ni, nj-1]*(dot(kmc.pvecs[kmc.nhat[ni, nj-1]], 
+                                         kmc.pvecs[kmc.nhat[ni, nj]])+1)) +
+                    (kmc.χ[ni-1, nj]*(dot(kmc.pvecs[kmc.nhat[ni-1, nj]], 
+                                      kmc.pvecs[kmc.nhat[ni, nj]])+1))
+                ) / 4.0
+
+   return cgij
+
+end
+
 function main2(pargs)
 
     maxiter = pargs["maxiter"]
@@ -569,10 +679,10 @@ function main2(pargs)
     ℓx = pargs["lx"]
     ℓy = pargs["ly"]
     σ_init = pargs["sigma-init"]
-    dx = ℓx/(ni-1)                  
-    dy = ℓy/(nj-1)                  
-    jbed = round(Int, tbed / dy)
-    jrow = round(Int, trow / dy)
+    @show dx = ℓx/(ni-1)                  
+    @show dy = ℓy/(nj-1)                  
+    @show jbed = round(Int, tbed / dy)
+    @show jrow = round(Int, trow / dy)
     xs = 0:dx:ℓx
     ys = 0:dy:ℓy
     τc = 1e-0
@@ -604,6 +714,7 @@ function main2(pargs)
                             Cbed, C0, Cair, kbed, k0, kair, 
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
                             init_solver(pargs))
+    @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0
 
     bc_curry!(T) = if pargs["top-insulated"]
         bc_p_insulated!(T, Tbed, 1, jbed, Tair, nj)
@@ -664,8 +775,17 @@ function main2(pargs)
                 display(p)
                 readline()
             end
+            p = heatmap(permutedims(coarse_grain(kmc)), size=(plot_len, plot_width))
+            title!("CG Crystallization, \$t=$(round(kmc.t; digits=1))\$")
+            savefig(figname*"_cg-crystal-$iter.$figtype")
+            if showplot
+                println("Enter to quit")
+                display(p)
+                readline()
+            end
             writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T), ',')
             writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)), ',')
+            writedlm(figname*"_cg-crystal-$iter.csv", permutedims(coarse_grain(kmc)), ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
