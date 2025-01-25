@@ -292,7 +292,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
-                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 0, true, T0, v0, 
+                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 1, true, T0, v0, 
                       jbed, C0, k0, J, Jm, pvecs, solver
                      )
 end
@@ -456,6 +456,8 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.trow = 0
                 kmc.nrow += 1
                 kmc.ihead += 1
+                @info("Starting a new row...")
+                @show kmc.lrhead, kmc.jhead, kmc.ihead, kmc.nrow, kmc.maxrow, nj
             end
         else
             new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
@@ -470,6 +472,8 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.trow = 0
                 kmc.nrow += 1
                 kmc.ihead -= 1
+                @info("Starting a new row...")
+                @show kmc.lrhead, kmc.jhead, kmc.ihead, kmc.nrow, kmc.maxrow, nj
             end
         end
     end
