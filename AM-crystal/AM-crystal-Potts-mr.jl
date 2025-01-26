@@ -73,6 +73,9 @@ s = ArgParseSettings();
     help = "Interaction potential in reorientation (J / mol) between neighbors"
     arg_type = Float64 
     default = 130.0
+  "--turnoff-meltint"
+    help = "flag for whether melting considers neighboring structure"
+    action = :store_true
   "--ndirs"
     help = "Number of discrete crystal plane directions"
     arg_type = Int 
@@ -255,6 +258,7 @@ mutable struct KineticMonteCarlo
     Jm::Float64
     pvecs::Matrix
     solver::Function
+    has_meltint::Bool
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
@@ -264,7 +268,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            kbed::Real, k0::Real, kair::Real,
                            Tbed::Real, T0::Real, Tair::Real, v0::Real,
                            J::Real, Jm::Real, ndirs::Int, σ_init::Float64, maxrow::Int,
-                           solver::Function)
+                           solver::Function, has_meltint::Bool)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
     # randomly initialize polymer directions based on truncated Gaussian
@@ -293,7 +297,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
                       dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 1, true, T0, v0, 
-                      jbed, C0, k0, J, Jm, pvecs, solver
+                      jbed, C0, k0, J, Jm, pvecs, solver, has_meltint
                      )
 end
 
@@ -384,8 +388,12 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
-                dEA = kmc.J*nbrχ
+                dEA = if kmc.has_meltint
+                    nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
+                    kmc.J*nbrχ
+                else
+                    0
+                end
                 rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.T[i, j] - kmc.Tc))
                 event_handlers[idx] = (melt!, (i, j))
             end
@@ -695,6 +703,7 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
+    @show has_meltint = !(pargs["turnoff-meltint"])
     ndirs = pargs["ndirs"]
     #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
     pal = palette(:broc)
@@ -717,7 +726,7 @@ function main2(pargs)
                             A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, 
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
-                            init_solver(pargs))
+                            init_solver(pargs), has_meltint)
     @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0
 
     bc_curry!(T) = if pargs["top-insulated"]
