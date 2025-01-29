@@ -264,6 +264,7 @@ mutable struct KineticMonteCarlo
     pvecs::Matrix
     solver::Function
     has_meltint::Bool
+    d_init::Distribution
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
@@ -282,7 +283,8 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     else
         Truncated(Normal(ndirs / 2, σ_init), 0.0, ndirs)
     end
-    nhat = map(x -> ceil(Int, x), rand(d, ni, nj))
+    #nhat = map(x -> ceil(Int, x), rand(d, ni, nj))
+    nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
     T[:, 1:jbed] .= Tbed
@@ -302,7 +304,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
                       dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 1, true, T0, v0, 
-                      jbed, C0, k0, J, Jm, pvecs, solver, has_meltint
+                      jbed, C0, k0, J, Jm, pvecs, solver, has_meltint, d
                      )
 end
 
@@ -379,7 +381,8 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
                     nhat = if kmc.nhat[i, j] + dθ < 1
                         kmc.nhat[i, j] += (dθ + get_ndirs(kmc))
                     elseif kmc.nhat[i, j] + dθ > get_ndirs(kmc)
-                        kmc.nhat[i, j] = (kmc.nhat[i, j] + dθ) % get_ndirs(kmc)
+                        newdir = mod(kmc.nhat[i, j] + dθ, get_ndirs(kmc))
+                        kmc.nhat[i, j] = (newdir == 0) ? get_ndirs(kmc) : newdir
                     else
                         kmc.nhat[i, j] += dθ
                     end
@@ -444,6 +447,14 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
     kmc.Cρ[irange, jrange] .= kmc.Cρ0
     kmc.k[irange, jrange] .= kmc.k0
     kmc.active[irange, jrange] .= true
+    ndirs = get_ndirs(kmc)
+    lr::Int = (kmc.lrhead) ? 1 : 0
+    kmc.nhat[irange, jrange] = map(x -> begin
+                                   y = ceil(Int, x)
+                                   z = mod(y - lr*ndirs / 2, ndirs)
+                                   (z == 0) ? 8 : z
+                               end, 
+                               rand(kmc.d_init, length(irange), length(jrange)))
 end
 
 function do_event!(kmc::KineticMonteCarlo, bc!)
