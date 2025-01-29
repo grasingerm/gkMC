@@ -92,6 +92,10 @@ s = ArgParseSettings();
     help = "Thermal conductivity of PEEK (W / cm K)"
     arg_type = Float64 
     default = 0.25e-2
+  "--k0mult"
+    help = "Thermal conductivity multiplier of crystalline PEEK"
+    arg_type = Float64 
+    default = 2
   "--kbed"
     help = "Thermal conductivity of copper bed (W / cm K)"
     arg_type = Float64
@@ -115,7 +119,7 @@ s = ArgParseSettings();
   "--dT", "-d"
     help = "change in temperature due to crystallization"
     arg_type = Float64
-    default = 0.0
+    default = 50.0
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
@@ -148,9 +152,9 @@ s = ArgParseSettings();
     help = "flag for whether top is insulated or open (i.e. not insulated)"
     action = :store_true
   "--v0"
-      help = "printer head velocity (cm / s)"
+    help = "printer head velocity (cm / s)"
     arg_type = Float64
-    default = 3.0
+    default = 1.0
   "--max-dt"
     help = "maximum time step for heat transfer time integration (s)"
     arg_type = Float64
@@ -240,6 +244,7 @@ mutable struct KineticMonteCarlo
     T
     Cρ
     k
+    k0mult::Float64
     dx::Float64
     ℓx::Float64
     dy::Float64
@@ -265,7 +270,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            jbed::Int, jrow::Int, dt::Real, max_dt::Real, max_Δt::Real,
                            A::Real, EA::Real, M::Real, Tc::Real, Tg::Real, ΔT::Real,
                            Cbed::Real, C0::Real, Cair::Real,
-                           kbed::Real, k0::Real, kair::Real,
+                           kbed::Real, k0::Real, kair::Real, k0mult::Real,
                            Tbed::Real, T0::Real, Tair::Real, v0::Real,
                            J::Real, Jm::Real, ndirs::Int, σ_init::Float64, maxrow::Int,
                            solver::Function, has_meltint::Bool)
@@ -295,7 +300,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     end
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
-                      A, EA, M, Tc, Tg, ΔT, T, Cρ, k, 
+                      A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
                       dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 1, true, T0, v0, 
                       jbed, C0, k0, J, Jm, pvecs, solver, has_meltint
                      )
@@ -418,6 +423,7 @@ function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int)
     @assert !kmc.χ[i, j]
     kmc.χ[i, j] = true
     kmc.T[i, j] += kmc.ΔT
+    kmc.k[i, j] *= kmc.k0mult
 end
 
 function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
@@ -425,6 +431,7 @@ function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
     kmc.χ[i, j] = false
     kmc.nhat[i, j] = rand(1:get_ndirs(kmc))
     kmc.T[i, j] -= kmc.ΔT
+    kmc.k[i, j] /= kmc.k0mult
 end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int}, 
@@ -700,6 +707,7 @@ function main2(pargs)
     τc = 1e-0
     Cbed, C0, Cair = pargs["Cpbed"], pargs["Cp0"], pargs["Cpair"]
     kbed, k0, kair = pargs["kbed"], pargs["k0"], pargs["kair"]
+    k0mult = pargs["k0mult"]
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
@@ -724,7 +732,7 @@ function main2(pargs)
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
-                            Cbed, C0, Cair, kbed, k0, kair, 
+                            Cbed, C0, Cair, kbed, k0, kair, k0mult,
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
                             init_solver(pargs), has_meltint)
     @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0
@@ -788,7 +796,8 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            p = heatmap(permutedims(coarse_grain(kmc)), size=(plot_len, plot_width))
+            cg = permutedims(coarse_grain(kmc))
+            p = heatmap(cg, size=(plot_len, plot_width), clims=(0.0, 1.0))
             title!("CG Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(figname*"_cg-crystal-$iter.$figtype")
             if showplot
