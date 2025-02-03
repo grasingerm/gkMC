@@ -692,6 +692,7 @@ function main2(pargs)
     showplot = pargs["showplot"]
     plot_size = pargs["plotsize"]
     outdir = pargs["outdir"]
+    mkpath(outdir)
     figtype = pargs["figtype"]
     A = pargs["KA"]
     @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
