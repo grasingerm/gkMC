@@ -17,6 +17,7 @@ using Distributions
 using LinearAlgebra
 using ColorSchemes, Colors
 using Distributions
+import YAML
 
 const USE_GPU = false
 import MPI
@@ -189,10 +190,10 @@ s = ArgParseSettings();
     help = "Time per plot (s)"
     arg_type = Float64
     default = 1e-0
-  "--figname"
+  "--outdir", "--figname"
     help = "figure name"
     arg_type = String
-    default = "graph"
+    default = "."
   "--figtype"
     help = "figure type"
     arg_type = String
@@ -690,7 +691,7 @@ function main2(pargs)
     doplot = pargs["doplot"]
     showplot = pargs["showplot"]
     plot_size = pargs["plotsize"]
-    figname = pargs["figname"]
+    outdir = pargs["outdir"]
     figtype = pargs["figtype"]
     A = pargs["KA"]
     @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
@@ -724,6 +725,7 @@ function main2(pargs)
     @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     @show has_meltint = !(pargs["turnoff-meltint"])
     ndirs = pargs["ndirs"]
+    YAML.write_file(joinpath(outdir, "args.yml"), pargs)
     #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
     pal = palette(:broc)
     #pal = :RdPu 
@@ -782,7 +784,7 @@ function main2(pargs)
         if (time_since_plot > timeplot)
             p = heatmap(permutedims(kmc.T[:, :]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
-            savefig(figname*"_temp-$iter.$figtype")
+            savefig(joinpath(outdir, "temp-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
@@ -801,7 +803,7 @@ function main2(pargs)
             #p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
             p = heatmap(permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)); c=pal, size=(plot_len, plot_width), clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
-            savefig(figname*"_crystal-$iter.$figtype")
+            savefig(joinpath(outdir, "crystal-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
@@ -810,15 +812,15 @@ function main2(pargs)
             cg = permutedims(coarse_grain(kmc))
             p = heatmap(cg, size=(plot_len, plot_width), clims=(0.0, 1.0))
             title!("CG Crystallization, \$t=$(round(kmc.t; digits=1))\$")
-            savefig(figname*"_cg-crystal-$iter.$figtype")
+            savefig(joinpath(outdir, "cg-crystal-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
                 readline()
             end
-            writedlm(figname*"_temp-$iter.csv", permutedims(kmc.T), ',')
-            writedlm(figname*"_crystal-$iter.csv", permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)), ',')
-            writedlm(figname*"_cg-crystal-$iter.csv", permutedims(coarse_grain(kmc)), ',')
+            writedlm(joinpath(outdir, "temp-$iter.csv"), permutedims(kmc.T), ',')
+            writedlm(joinpath(outdir, "crystal-$iter.csv"), permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)), ',')
+            writedlm(joinpath(outdir, "cg-crystal-$iter.csv"), permutedims(coarse_grain(kmc)), ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
@@ -839,7 +841,7 @@ function main2(pargs)
         xlabel!("time")
         ylabel!("crystallizaiton %")
         ylims!(0.0, 1.0)
-        savefig(figname*"_crystal.$figtype")
+        savefig(joinpath(outdir, "crystal.$figtype"))
         if showplot
             println("Enter to quit")
             display(p)
@@ -848,13 +850,13 @@ function main2(pargs)
         p = plot(t_series, T_series)
         xlabel!("time")
         ylabel!("avg T")
-        savefig(figname*"_temp.$figtype")
+        savefig(joinpath(outdir, "temp.$figtype"))
         if showplot
             println("Enter to quit")
             display(p)
             readline()
         end
-        writedlm(figname*"_data.csv", hcat(t_series, α_series, T_series), ',')
+        writedlm(joinpath(outdir, "data.csv"), hcat(t_series, α_series, T_series), ',')
     end
 
     kmc
