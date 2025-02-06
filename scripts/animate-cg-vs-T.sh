@@ -15,7 +15,7 @@ for f in graph_crystal-*.png; do
     #convert +append graph_crystal-$num.png graph_temp-$num.png combined_images/combined-$paddedNum.png
     
     # Uncomment to combine images vertically
-    convert -append graph_crystal-$num.png graph_temp-$num.png combined_images/combined-$paddedNum.png
+    convert -append graph_temp-$num.png graph_crystal-$num.png graph_cg-crystal-$num.png combined_images/all-$paddedNum.png
 done
 
 # Combine matching crystal and temperature images
@@ -30,9 +30,9 @@ for f in crystal-*.png; do
     #convert +append graph_crystal-$num.png graph_temp-$num.png combined_images/combined-$paddedNum.png
     
     # Uncomment to combine images vertically
-    convert -append crystal-$num.png temp-$num.png combined_images/combined-$paddedNum.png
+    convert -append temp-$num.png crystal-$num.png cg-crystal-$num.png combined_images/all-$paddedNum.png
 done
 
 # Create animated gif from combined images
 #convert -delay 8 -loop 0 -layers optimize combined_images/combined-*.png gif_output/crystal_temperature_animation.gif
-convert -delay 7 -loop 0 combined_images/combined-*.png gif_output/crystal_temperature_animation.gif
+convert -delay 7 -loop 0 combined_images/all-*.png gif_output/tccg_animation.gif
