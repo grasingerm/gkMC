@@ -124,11 +124,11 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 30
+    default = 31
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 30
+    default = 31
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
@@ -274,7 +274,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
         Truncated(Normal(ndirs / 2, σ_init), 0.0, ndirs)
     end
     #nhat = map(x -> ceil(Int, x), rand(d, ni, nj))
-    nhat = zeros(ni, nj)
+    nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
     T[:, :] .= Tair
