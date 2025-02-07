@@ -124,11 +124,11 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 30
+    default = 31
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 30
+    default = 31
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
