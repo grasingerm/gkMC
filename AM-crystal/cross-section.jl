@@ -274,7 +274,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
         Truncated(Normal(ndirs / 2, σ_init), 0.0, ndirs)
     end
     #nhat = map(x -> ceil(Int, x), rand(d, ni, nj))
-    nhat = zeros(ni, nj)
+    nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
     T[:, :] .= Tair
