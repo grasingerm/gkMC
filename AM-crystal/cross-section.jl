@@ -161,7 +161,7 @@ s = ArgParseSettings();
     arg_type = Float64
     default = 2.5e-3
   "--tint-algo"
-    help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
+  help = "ODE solver for time integration (Rodas4P|Rodas5P|Rosenbrock23|Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\n 4th order A-stable stiffly stable Rosenbrock method with a stiff-aware 3rd order interpolant | \n5th order A-stable stiffly stable Rosenbrock method with a stiff-aware 4th order interpolant | \nRosenbrock23 - 2/3 L-Stable Rosenbrock-W method which is good for very stiff equations with oscillations at low tolerances. 2nd order stiff-aware interpolation | \nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
     arg_type = String
     default = "Tsit5"
   "--tint-reltol"
@@ -170,6 +170,12 @@ s = ArgParseSettings();
   "--tint-abstol"
     help = "absolute tolerance for time integration"
     arg_type = Float64
+  "--tint-dt"
+    help = "inner fixed time step for time integration (s); REQUIRED for Rosenbrock23, ImplicitMidpoint, etc."
+    arg_type = Float64
+  "--tint-adapt"
+    help = "adaptive time stepping"
+    action = :store_true
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
@@ -181,11 +187,11 @@ s = ArgParseSettings();
   "--timeout"
     help = "Time per output (s)"
     arg_type = Float64
-    default = 1e-1
+    default = 5e-2
   "--timeplot"
     help = "Time per plot (s)"
     arg_type = Float64
-    default = 1e-1
+    default = 5e-2
   "--outdir"
     help = "out directory"
     arg_type = String
@@ -220,6 +226,10 @@ function init_solver(pargs)
     opts = Dict()
     opts[:reltol] = (haskey(pargs, "tint-reltol") && pargs["tint-reltol"] != nothing) ? pargs["tint-reltol"] : 1e-3
     opts[:abstol] = (haskey(pargs, "tint-abstol") && pargs["tint-abstol"] != nothing) ? pargs["tint-abstol"] : 1e-6
+    opts[:adaptive] = pargs["tint-adapt"]
+    if haskey(pargs, "tint-dt")
+        opts[:dt] = pargs["tint-dt"]
+    end
     return (prob) -> solve(prob, solver_type(); save_everystep=false, save_start=false, opts...)
 end
 
@@ -316,6 +326,7 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
     lambda_int(Δt) = begin
         prob = ODEProblem((dT, T, p, t) -> begin
             @parallel diffusion2D_step!(dT, kmc.T, kmc.k, kmc.Cρ, 1/kmc.dx, 1/kmc.dy)
+            bc!(kmc.T)
         end, kmc.T, (0.0, Δt))
         kmc.solver(prob)
     end
