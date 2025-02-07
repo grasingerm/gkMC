@@ -149,6 +149,18 @@ s = ArgParseSettings();
     help = "width of a single row (cm)"
     arg_type = Float64
     default = 0.08
+  "--h-vert"
+    help = "convective heat transfer coefficient for vertically oriented interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 1e-3
+  "--h-up"
+    help = "convective heat transfer coefficient for face-up interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 1.2e-3
+  "--h-down"
+    help = "convective heat transfer coefficient for face-down interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 0.6e-3
   "--top-insulated"
     help = "flag for whether top is insulated or open (i.e. not insulated)"
     action = :store_true
@@ -287,19 +299,22 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
-    T[:, :] .= Tair
-    T[:, 1:jbed] .= Tbed
-    Cρ = @zeros(ni, nj)
-    Cρ[:, :] .= Cair
-    Cρ[:, 1:jbed] .= Cbed
     k = @zeros(ni, nj)
+    Cρ = @zeros(ni, nj)
+    T[:, :] .= Tair
     k[:, :] .= kair
-    k[:, 1:jbed] .= kbed
+    Cρ[:, :] .= Cair
+    T[:, 1:(max(1, jbed))] .= Tbed
+    if jbed > 0
+        Cρ[:, 1:jbed] .= Cbed
+        k[:, 1:jbed] .= kbed
+    end
     imid = round(Int, ni / 2)
     irow_start::Int = imid - floor(Int, irow / 2)
     irow_end::Int = irow_start + irow + 1
+    hj::Int = round(Int, jrow / 2)
     for j=1:jrow
-        ext::Int = round(Int, (jrow - 1) / 2 - abs( (j-1) - (jrow-1) / 2 ))
+        ext::Int = round(Int, sqrt(hj^2 - ((j-1) - hj)^2))
         irange = (irow_start-ext):(irow_end+ext)
         jidx::Int = jbed+j
         T[irange, jidx] .= T0
@@ -500,6 +515,23 @@ end
     return
 end
 
+@parallel_indices (j) function bc_left_convection!(T, Tair, α, k, dx, h)
+    @show α * ((2*T[2,j] - 2*T[1,j])/dx^2) - (2α*h/(k*dx))*(T[1,j] - Tair)
+    T[1, j] += α * ((2*T[2,j] - 2*T[1,j])/dx^2) - (2α*h/(k*dx))*(T[1,j] - Tair)
+    return
+end
+
+@parallel_indices (j) function bc_right_convection!(T, Tair, α, k, dx, h)
+    T[end, j] += α * ((2T[end-1,j] - 2T[end,j])/dx^2) - (2α*h/(k*dx))*(T[end,j] - Tair)
+    return
+end
+
+@parallel_indices (i) function bc_top_convection!(T, Tair, α, k, dy, h)
+    #T[i, end] += α * ((2T[i,end-1] - 2T[i,end])/dy^2) - (2α*h/(k*dy))*(T[i,end] - Tair)
+    T[i, end] = (k / (h*dy)) * T[i, end-1] + Tair
+    return
+end
+
 function bc_p_insulated!(T, Tb, jbedbot, jbedtop, Tair, jair)
     ni, nj = size(T)
 
@@ -520,6 +552,23 @@ function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
 
     # insulated at the top and sides
     @parallel (1:ni) bc_horizontal_dirichlet!(T, Tair, nj)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
+    @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
+    
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
+end
+
+function bc_p_convection!(T, Tb, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup)
+    ni, nj = size(T)
+
+    # convection boundary conditions
+    @parallel (1:ni) bc_top_convection!(T, Tair, α, k, dy, hup)
+    #@parallel (1:nj) bc_left_convection!(T, Tair, α, k, dx, hvert)
+    #@parallel (1:nj) bc_right_convection!(T, Tair, α, k, dx, hvert)
     @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
     @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
     
@@ -711,11 +760,14 @@ function main2(pargs)
                             init_solver(pargs), has_meltint)
     @show dx, dy, dx / dy, ℓx, ℓy, ℓx / ℓy
     @show hrow, wrow, irow
- 
+
+    hvert, hup = pargs["h-vert"], pargs["h-up"]
     bc_curry!(T) = if pargs["top-insulated"]
-        bc_p_insulated!(T, Tbed, 1, jbed, Tair, nj)
+        @warn("Insulated boundary condition is deprecated")
+        bc_p_insulated!(T, Tbed, 1, max(jbed, 1), Tair, nj)
     else
-        bc_p_open!(T, Tbed, 1, jbed, Tair, nj)
+        α = kair / Cair
+        bc_p_convection!(T, Tbed, 1, max(jbed, 1), Tair, α, kair, dx, hvert, dy, hup)
     end
 
     t_series = [];
@@ -747,6 +799,14 @@ function main2(pargs)
             p = heatmap(permutedims(kmc.T[:, :]); clims=clims, size=(plot_len, plot_width))
             title!("Temperature, \$t=$(round(kmc.t; digits=1))\$")
             savefig(joinpath(outdir, "temp-$iter.$figtype"))
+            if showplot
+                println("Enter to quit")
+                display(p)
+                readline()
+            end
+            p = heatmap(permutedims(kmc.active .* kmc.T[:, :]); clims=clims, size=(plot_len, plot_width))
+            title!("Temperature (section), \$t=$(round(kmc.t; digits=1))\$")
+            savefig(joinpath(outdir, "active-temp-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
