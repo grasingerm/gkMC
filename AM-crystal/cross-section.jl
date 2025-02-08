@@ -124,19 +124,19 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 31
+    default = 81
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 31
+    default = 81
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
-    default = 0.15
+    default = 0.2
   "--ly"
     help = "length in the y-direction (cm)"
     arg_type = Float64
-    default = 0.15
+    default = 0.2
   "--tbed"
     help = "thickness of bed (cm)"
     arg_type = Float64
@@ -173,7 +173,7 @@ s = ArgParseSettings();
     arg_type = Float64
     default = 2.5e-3
   "--tint-algo"
-  help = "ODE solver for time integration (Rodas4P|Rodas5P|Rosenbrock23|Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\n 4th order A-stable stiffly stable Rosenbrock method with a stiff-aware 3rd order interpolant | \n5th order A-stable stiffly stable Rosenbrock method with a stiff-aware 4th order interpolant | \nRosenbrock23 - 2/3 L-Stable Rosenbrock-W method which is good for very stiff equations with oscillations at low tolerances. 2nd order stiff-aware interpolation | \nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
+    help = "ODE solver for time integration (Rodas4P|Rodas5P|Rosenbrock23|Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\n 4th order A-stable stiffly stable Rosenbrock method with a stiff-aware 3rd order interpolant | \n5th order A-stable stiffly stable Rosenbrock method with a stiff-aware 4th order interpolant | \nRosenbrock23 - 2/3 L-Stable Rosenbrock-W method which is good for very stiff equations with oscillations at low tolerances. 2nd order stiff-aware interpolation | \nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
     arg_type = String
     default = "Tsit5"
   "--tint-reltol"
@@ -238,8 +238,10 @@ function init_solver(pargs)
     opts = Dict()
     opts[:reltol] = (haskey(pargs, "tint-reltol") && pargs["tint-reltol"] != nothing) ? pargs["tint-reltol"] : 1e-3
     opts[:abstol] = (haskey(pargs, "tint-abstol") && pargs["tint-abstol"] != nothing) ? pargs["tint-abstol"] : 1e-6
-    opts[:adaptive] = pargs["tint-adapt"]
-    if haskey(pargs, "tint-dt")
+    if haskey(pargs, "tint-adapt") && pargs["tint-adapt"]
+        opts[:adaptive] = pargs["tint-adapt"]
+    end
+    if haskey(pargs, "tint-dt") && pargs["tint-dt"] != nothing
         opts[:dt] = pargs["tint-dt"]
     end
     return (prob) -> solve(prob, solver_type(); save_everystep=false, save_start=false, opts...)
@@ -335,13 +337,14 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                       solver, has_meltint, d)
 end
 
-function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
+function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     nintsteps = floor(Int, kmc.dt / kmc.max_dt)
     Δt_remaining = kmc.dt - nintsteps*kmc.max_dt
     lambda_int(Δt) = begin
         prob = ODEProblem((dT, T, p, t) -> begin
             @parallel diffusion2D_step!(dT, kmc.T, kmc.k, kmc.Cρ, 1/kmc.dx, 1/kmc.dy)
-            bc!(kmc.T)
+            bcdT!(dT, T)
+            bc!(T)
         end, kmc.T, (0.0, Δt))
         kmc.solver(prob)
     end
@@ -372,7 +375,7 @@ end
 
 get_ndirs(kmc) = size(kmc.pvecs, 2)
 
-function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
+function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     ni, nj = size(kmc.χ)
     nsites = ni*nj
     nevents = 2*nsites + 1
@@ -425,7 +428,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     total_other_events_rate = (length(rates) > 0) ? sum(rates) : 0.0
     kmc.dt = min(kmc.max_Δt, 1 / total_other_events_rate)
     rates[end] = 1/kmc.dt
-    event_handlers[end] = (transfer_heat!, (bc!,))
+    event_handlers[end] = (transfer_heat!, (bc!, bcdT!))
 
     (rates=rates, event_handlers=event_handlers)
 end
@@ -470,8 +473,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
                                rand(kmc.d_init, length(irange), length(jrange)))
 end
 
-function do_event!(kmc::KineticMonteCarlo, bc!)
-    events = kmc_events(kmc, bc!)
+function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
+    events = kmc_events(kmc, bc!, bcdT!)
     rate_cumsum = cumsum(events.rates)
     choice_dec = rand(Uniform(0, rate_cumsum[end]))
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
@@ -515,20 +518,18 @@ end
     return
 end
 
-@parallel_indices (j) function bc_left_convection!(T, Tair, α, k, dx, h)
-    @show α * ((2*T[2,j] - 2*T[1,j])/dx^2) - (2α*h/(k*dx))*(T[1,j] - Tair)
-    T[1, j] += α * ((2*T[2,j] - 2*T[1,j])/dx^2) - (2α*h/(k*dx))*(T[1,j] - Tair)
+@parallel_indices (j) function bcdT_left_convection!(dT, T, Tair, α, k, dx, h)
+    dT[1, j] = α * ((T[2,j] - T[1,j])/dx^2) - (α*h/(k*dx))*(T[1,j] - Tair)
     return
 end
 
-@parallel_indices (j) function bc_right_convection!(T, Tair, α, k, dx, h)
-    T[end, j] += α * ((2T[end-1,j] - 2T[end,j])/dx^2) - (2α*h/(k*dx))*(T[end,j] - Tair)
+@parallel_indices (j) function bcdT_right_convection!(dT, T, Tair, α, k, dx, h)
+    dT[end, j] = α * ((T[end-1,j] - T[end,j])/dx^2) - (α*h/(k*dx))*(T[end,j] - Tair)
     return
 end
 
-@parallel_indices (i) function bc_top_convection!(T, Tair, α, k, dy, h)
-    #T[i, end] += α * ((2T[i,end-1] - 2T[i,end])/dy^2) - (2α*h/(k*dy))*(T[i,end] - Tair)
-    T[i, end] = (k / (h*dy)) * T[i, end-1] + Tair
+@parallel_indices (i) function bcdT_top_convection!(dT, T, Tair, α, k, dy, h)
+    dT[i, end] = α * ((T[i,end-1] - T[i,end])/dy^2) - (α*h/(k*dy))*(T[i,end] - Tair)
     return
 end
 
@@ -562,21 +563,29 @@ function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
 end
 
-function bc_p_convection!(T, Tb, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup)
+function bc_p_bed!(T, Tb, jbedbot, jbedtop)
     ni, nj = size(T)
 
-    # convection boundary conditions
-    @parallel (1:ni) bc_top_convection!(T, Tair, α, k, dy, hup)
-    #@parallel (1:nj) bc_left_convection!(T, Tair, α, k, dx, hvert)
-    #@parallel (1:nj) bc_right_convection!(T, Tair, α, k, dx, hvert)
-    @parallel (1:nj) bc_vertical_neumann!(T, 0, 1, -1)
-    @parallel (1:nj) bc_vertical_neumann!(T, 0, ni, 1)
-    
     # keep bed constant temperature
     @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedbot)
     @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
+end
+
+function bcdT_p_convection!(dT, T, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup)
+    ni, nj = size(dT)
+
+    # convection boundary conditions
+    @parallel (1:ni) bcdT_top_convection!(dT, T, Tair, α, k, dy, hup)
+    @parallel (1:nj) bcdT_left_convection!(dT, T, Tair, α, k, dx, hvert)
+    @parallel (1:nj) bcdT_right_convection!(dT, T, Tair, α, k, dx, hvert)
+    
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(dT, 0, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(dT, 0, jbedtop)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(dT, 0, 1)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(dT, 0, ni)
 end
 
 function coarse_grain(kmc::KineticMonteCarlo)
@@ -762,12 +771,19 @@ function main2(pargs)
     @show hrow, wrow, irow
 
     hvert, hup = pargs["h-vert"], pargs["h-up"]
-    bc_curry!(T) = if pargs["top-insulated"]
+    bc_curry!, bcdT_curry! = if pargs["top-insulated"]
         @warn("Insulated boundary condition is deprecated")
-        bc_p_insulated!(T, Tbed, 1, max(jbed, 1), Tair, nj)
+        (
+           (T) -> bc_p_insulated!(T, Tbed, 1, max(jbed, 1), Tair, nj), 
+           (dT) -> return
+        )
     else
         α = kair / Cair
-        bc_p_convection!(T, Tbed, 1, max(jbed, 1), Tair, α, kair, dx, hvert, dy, hup)
+        (
+           (T) -> bc_p_bed!(T, Tbed, 1, max(jbed, 1)),
+           (dT, T) -> bcdT_p_convection!(dT, T, 1, max(jbed, 1), Tair, α, kair, 
+                                         dx, hvert, dy, hup)
+        )
     end
 
     t_series = [];
@@ -786,7 +802,7 @@ function main2(pargs)
     time_since_plot = 0.0
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
-        Δt = do_event!(kmc, bc_curry!)
+        Δt = do_event!(kmc, bc_curry!, bcdT_curry!)
         time_since_out += Δt
         time_since_plot += Δt
         if (time_since_out > timeout)
