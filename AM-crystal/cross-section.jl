@@ -195,15 +195,15 @@ s = ArgParseSettings();
   "--maxtime", "-t"
     help = "maximum simulation time"
     arg_type = Float64
-    default = 6e1
+    default = 3e1
   "--timeout"
     help = "Time per output (s)"
     arg_type = Float64
-    default = 5e-2
+    default = 2.5e-2
   "--timeplot"
     help = "Time per plot (s)"
     arg_type = Float64
-    default = 5e-2
+    default = 2.5e-2
   "--outdir"
     help = "out directory"
     arg_type = String
