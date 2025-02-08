@@ -208,6 +208,9 @@ s = ArgParseSettings();
     help = "out directory"
     arg_type = String
     default = "."
+  "--cleandir"
+    help = "clean out directory before running"
+    action = :store_true
   "--figtype"
     help = "figure type"
     arg_type = String
@@ -711,6 +714,9 @@ function main2(pargs)
     plot_size = pargs["plotsize"]
     outdir = pargs["outdir"]
     mkpath(outdir)
+    if pargs["cleandir"]
+        foreach(rm, readdir(outdir, join=true))
+    end
     figtype = pargs["figtype"]
     A = pargs["KA"]
     @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
