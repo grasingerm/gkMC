@@ -149,6 +149,14 @@ s = ArgParseSettings();
     help = "width of a single row (cm)"
     arg_type = Float64
     default = 0.08
+  "--rowtime"
+    help = "time between printed rows"
+    arg_type = Float64
+    default = 3.0
+  "--maxrow"
+    help = "maximum number of rows to print"
+    arg_type = Int
+    default = 2
   "--h-vert"
     help = "convective heat transfer coefficient for vertically oriented interfaces (W / cm^2 K)"
     arg_type = Float64
@@ -195,7 +203,7 @@ s = ArgParseSettings();
   "--maxtime", "-t"
     help = "maximum simulation time"
     arg_type = Float64
-    default = 3e1
+    default = 2e1
   "--timeout"
     help = "Time per output (s)"
     arg_type = Float64
@@ -272,6 +280,10 @@ mutable struct KineticMonteCarlo
     ℓx::Float64
     dy::Float64
     ℓy::Float64
+    jhead::Int
+    nrow::Int
+    lrhead::Bool
+    rowtime::Float64
     T0::Float64
     Cρ0::Float64
     k0::Float64
@@ -314,30 +326,18 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
         Cρ[:, 1:jbed] .= Cbed
         k[:, 1:jbed] .= kbed
     end
-    imid = round(Int, ni / 2)
-    irow_start::Int = imid - floor(Int, irow / 2)
-    irow_end::Int = irow_start + irow + 1
-    hj::Int = round(Int, jrow / 2)
-    for j=1:jrow
-        ext::Int = round(Int, sqrt(hj^2 - ((j-1) - hj)^2))
-        irange = (irow_start-ext):(irow_end+ext)
-        jidx::Int = jbed+j
-        T[irange, jidx] .= T0
-        k[irange, jidx] .= k0
-        Cρ[irange, jidx] .= C0
-        active[irange, jidx] .= true
-        nhat[irange, jidx] = map(x -> ceil(Int, x), rand(d, length(irange)))
-    end
 
     pvecs = zeros(2, ndirs)
     for i in 1:ndirs
         pvecs[1, i] = cos( 2*pi * (i) / ndirs )
         pvecs[2, i] = sin( 2*pi * (i) / ndirs )
     end
-    KineticMonteCarlo(0.0, dt, max_dt, max_Δt, χ, nhat, active, 
+    kmc = KineticMonteCarlo(0.0, dt, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
-                      dx, ℓx, dy, ℓy, T0, C0, k0, J, Jm, pvecs, 
+                      dx, ℓx, dy, ℓy, jbed, 1, true, 0, T0, C0, k0, J, Jm, pvecs, 
                       solver, has_meltint, d)
+    deposit_row!(kmc, irow, jrow)
+    return kmc
 end
 
 function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
@@ -458,11 +458,7 @@ end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int}, 
                   jrange::UnitRange{Int})
-    if irange.start > 1
-        kmc.T[(irange.start-1):irange.stop, jrange] .= kmc.T0
-    else
-        kmc.T[irange, jrange] .= kmc.T0
-    end
+    kmc.T[irange, jrange] .= kmc.T0
     kmc.Cρ[irange, jrange] .= kmc.Cρ0
     kmc.k[irange, jrange] .= kmc.k0
     kmc.active[irange, jrange] .= true
@@ -476,7 +472,22 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
                                rand(kmc.d_init, length(irange), length(jrange)))
 end
 
-function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
+function deposit_row!(kmc::KineticMonteCarlo, irow::Int, jrow::Int)
+    ni, nj = size(kmc.T)
+    imid::Int = round(Int, ni / 2)
+    irow_start::Int = imid - floor(Int, irow / 2)
+    irow_end::Int = irow_start + irow + 1
+    hj::Int = round(Int, jrow / 2)
+    for j=1:jrow
+        ext::Int = round(Int, sqrt(hj^2 - ((j-1) - hj)^2))
+        irange = (irow_start-ext):(irow_end+ext)
+        jidx::Int = kmc.jhead+j
+        deposit!(kmc, irange, jidx:jidx)
+    end
+    kmc.jhead += jrow
+end
+
+function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!, rowtime, irow, jrow, maxrow)
     events = kmc_events(kmc, bc!, bcdT!)
     rate_cumsum = cumsum(events.rates)
     choice_dec = rand(Uniform(0, rate_cumsum[end]))
@@ -485,6 +496,13 @@ function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
     f(kmc, args...)
     Δt = -log(rand()) / rate_cumsum[end]
     kmc.t += Δt
+    kmc.rowtime += Δt
+    if kmc.nrow < maxrow && kmc.rowtime > rowtime
+        deposit_row!(kmc, irow, jrow)
+        kmc.nrow += 1
+        kmc.rowtime = 0.0
+        kmc.lrhead = !(kmc.lrhead)
+    end
     return Δt
 end
 
@@ -729,6 +747,8 @@ function main2(pargs)
     tbed = pargs["tbed"]
     hrow = pargs["hrow"]
     wrow = pargs["wrow"]
+    rowtime = pargs["rowtime"]
+    maxrow::Int = pargs["maxrow"]
     maxdt = pargs["max-dt"]
     maxΔt = pargs["max-Deltat"]
     ℓx = pargs["lx"]
@@ -808,7 +828,7 @@ function main2(pargs)
     time_since_plot = 0.0
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
-        Δt = do_event!(kmc, bc_curry!, bcdT_curry!)
+        Δt = do_event!(kmc, bc_curry!, bcdT_curry!, rowtime, irow, jrow, maxrow)
         time_since_out += Δt
         time_since_plot += Δt
         if (time_since_out > timeout)
