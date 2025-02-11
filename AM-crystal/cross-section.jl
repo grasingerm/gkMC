@@ -140,7 +140,7 @@ s = ArgParseSettings();
   "--tbed"
     help = "thickness of bed (cm)"
     arg_type = Float64
-    default = 0.01
+    default = 0.0
   "--hrow"
     help = "thickness of a single row (cm)"
     arg_type = Float64
@@ -175,7 +175,7 @@ s = ArgParseSettings();
   "--max-dt"
     help = "maximum time step for heat transfer time integration (s)"
     arg_type = Float64
-    default = 1e-8
+    default = 1e-6
   "--max-Deltat"
     help = "maximum time step for kmc (s)"
     arg_type = Float64

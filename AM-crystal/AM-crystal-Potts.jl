@@ -124,42 +124,54 @@ s = ArgParseSettings();
   "--ni"
     help = "lattice sites in the x-direction"
     arg_type = Int
-    default = 121
+    default = 201
   "--nj"
     help = "lattice sites in the y-direction"
     arg_type = Int
-    default = 15
+    default = 31
   "--lx"
     help = "length in the x-direction (cm)"
     arg_type = Float64
-    default = 3
+    default = 2
   "--ly"
     help = "length in the y-direction (cm)"
     arg_type = Float64
-    default = 0.07
+    default = 0.15
   "--tbed"
     help = "thickness of bed (cm)"
     arg_type = Float64
-    default = 0.01
+    default = 0.0
   "--trow"
     help = "thickness of a single row (cm)"
     arg_type = Float64
-    default = 0.02
+    default = 0.05
   "--maxrow"
     help = "maximum number of rows"
     arg_type = Int
     default = 2
+  "--h-vert"
+    help = "convective heat transfer coefficient for vertically oriented interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 1e-3
+  "--h-up"
+    help = "convective heat transfer coefficient for face-up interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 1.2e-3
+  "--h-down"
+    help = "convective heat transfer coefficient for face-down interfaces (W / cm^2 K)"
+    arg_type = Float64
+    default = 0.6e-3
   "--top-insulated"
     help = "flag for whether top is insulated or open (i.e. not insulated)"
     action = :store_true
   "--v0"
     help = "printer head velocity (cm / s)"
     arg_type = Float64
-    default = 2.0
+    default = 1.0
   "--max-dt"
     help = "maximum time step for heat transfer time integration (s)"
     arg_type = Float64
-    default = 1e-8
+    default = 1e-6
   "--max-Deltat"
     help = "maximum time step for kmc (s)"
     arg_type = Float64
@@ -174,6 +186,12 @@ s = ArgParseSettings();
   "--tint-abstol"
     help = "absolute tolerance for time integration"
     arg_type = Float64
+  "--tint-dt"
+    help = "inner fixed time step for time integration (s); REQUIRED for Rosenbrock23, ImplicitMidpoint, etc."
+    arg_type = Float64
+  "--tint-adapt"
+    help = "adaptive time stepping"
+    action = :store_true
   "--maxiter", "-m"
     help = "maximum number of iterations"
     arg_type = Int
@@ -181,19 +199,22 @@ s = ArgParseSettings();
   "--maxtime", "-t"
     help = "maximum simulation time"
     arg_type = Float64
-    default = 6e1
+    default = 2e1
   "--timeout"
     help = "Time per output (s)"
     arg_type = Float64
-    default = 1e-1
+    default = 2.5e-2
   "--timeplot"
     help = "Time per plot (s)"
     arg_type = Float64
-    default = 1e-1
+    default = 2.5e-2
   "--outdir", "--figname"
     help = "figure name"
     arg_type = String
     default = "."
+  "--cleandir"
+    help = "clean out directory before running"
+    action = :store_true
   "--figtype"
     help = "figure type"
     arg_type = String
@@ -224,6 +245,12 @@ function init_solver(pargs)
     opts = Dict()
     opts[:reltol] = (haskey(pargs, "tint-reltol") && pargs["tint-reltol"] != nothing) ? pargs["tint-reltol"] : 1e-3
     opts[:abstol] = (haskey(pargs, "tint-abstol") && pargs["tint-abstol"] != nothing) ? pargs["tint-abstol"] : 1e-6
+    if haskey(pargs, "tint-adapt") && pargs["tint-adapt"]
+        opts[:adaptive] = pargs["tint-adapt"]
+    end
+    if haskey(pargs, "tint-dt") && pargs["tint-dt"] != nothing
+        opts[:dt] = pargs["tint-dt"]
+    end
     return (prob) -> solve(prob, solver_type(); save_everystep=false, save_start=false, opts...)
 end
 
@@ -288,19 +315,23 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     nhat = rand(1:ndirs, ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
-    T[:, 1:jbed] .= Tbed
-    T[:, (jbed+1):end] .= Tair
-    Cρ = @zeros(ni, nj)
-    Cρ[:, 1:jbed] .= Cbed
-    Cρ[:, (jbed+1):end] .= Cair
     k = @zeros(ni, nj)
-    k[:, 1:jbed] .= kbed
-    k[:, (jbed+1):end] .= kair
+    Cρ = @zeros(ni, nj)
+    T[:, :] .= Tair
+    k[:, :] .= kair
+    Cρ[:, :] .= Cair
+    T[:, 1:(max(1, jbed))] .= Tbed
+    if jbed > 0
+        Cρ[:, 1:jbed] .= Cbed
+        k[:, 1:jbed] .= kbed
+    end
+
     pvecs = zeros(2, ndirs)
     for i in 1:ndirs
         pvecs[1, i] = cos( 2*pi * (i) / ndirs )
         pvecs[2, i] = sin( 2*pi * (i) / ndirs )
     end
+
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
@@ -309,12 +340,14 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                      )
 end
 
-function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function)
+function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     nintsteps = floor(Int, kmc.dt / kmc.max_dt)
     Δt_remaining = kmc.dt - nintsteps*kmc.max_dt
     lambda_int(Δt) = begin
         prob = ODEProblem((dT, T, p, t) -> begin
             @parallel diffusion2D_step!(dT, kmc.T, kmc.k, kmc.Cρ, 1/kmc.dx, 1/kmc.dy)
+            bcdT!(dT, T)
+            bc!(T)
         end, kmc.T, (0.0, Δt))
         kmc.solver(prob)
     end
@@ -360,7 +393,7 @@ end
 
 get_ndirs(kmc) = size(kmc.pvecs, 2)
 
-function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
+function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     ni, nj = size(kmc.χ)
     nsites = ni*nj
     nevents = 2*nsites + 1
@@ -413,7 +446,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function)
     total_other_events_rate = (length(rates) > 0) ? sum(rates) : 0.0
     kmc.dt = min(kmc.max_Δt, 1 / total_other_events_rate)
     rates[end] = 1/kmc.dt
-    event_handlers[end] = (transfer_heat!, (bc!,))
+    event_handlers[end] = (transfer_heat!, (bc!, bcdT!))
 
     (rates=rates, event_handlers=event_handlers)
 end
@@ -458,8 +491,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
                                rand(kmc.d_init, length(irange), length(jrange)))
 end
 
-function do_event!(kmc::KineticMonteCarlo, bc!)
-    events = kmc_events(kmc, bc!)
+function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
+    events = kmc_events(kmc, bc!, bcdT!)
     rate_cumsum = cumsum(events.rates)
     choice_dec = rand(Uniform(0, rate_cumsum[end]))
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
@@ -483,7 +516,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.trow = 0
                 kmc.nrow += 1
                 kmc.ihead += 1
-                @info("Starting a new row...")
+                @info("Attempting to start a new row...")
                 @show kmc.lrhead, kmc.jhead, kmc.ihead, kmc.nrow, kmc.maxrow, nj
             end
         else
@@ -499,7 +532,7 @@ function do_event!(kmc::KineticMonteCarlo, bc!)
                 kmc.trow = 0
                 kmc.nrow += 1
                 kmc.ihead -= 1
-                @info("Starting a new row...")
+                @info("Attempting to start a new row...")
                 @show kmc.lrhead, kmc.jhead, kmc.ihead, kmc.nrow, kmc.maxrow, nj
             end
         end
@@ -540,6 +573,21 @@ end
     return
 end
 
+@parallel_indices (j) function bcdT_left_convection!(dT, T, Tair, α, k, dx, h)
+    dT[1, j] = α * ((T[2,j] - T[1,j])/dx^2) - (α*h/(k*dx))*(T[1,j] - Tair)
+    return
+end
+
+@parallel_indices (j) function bcdT_right_convection!(dT, T, Tair, α, k, dx, h)
+    dT[end, j] = α * ((T[end-1,j] - T[end,j])/dx^2) - (α*h/(k*dx))*(T[end,j] - Tair)
+    return
+end
+
+@parallel_indices (i) function bcdT_top_convection!(dT, T, Tair, α, k, dy, h)
+    dT[i, end] = α * ((T[i,end-1] - T[i,end])/dy^2) - (α*h/(k*dy))*(T[i,end] - Tair)
+    return
+end
+
 function bc_p_insulated!(T, Tb, jbedbot, jbedtop, Tair, jair)
     ni, nj = size(T)
 
@@ -568,6 +616,31 @@ function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
     @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
     @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
+end
+
+function bc_p_bed!(T, Tb, jbedbot, jbedtop)
+    ni, nj = size(T)
+
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(T, Tb, jbedtop)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, 1)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(T, Tb, ni)
+end
+
+function bcdT_p_convection!(dT, T, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup)
+    ni, nj = size(dT)
+
+    # convection boundary conditions
+    @parallel (1:ni) bcdT_top_convection!(dT, T, Tair, α, k, dy, hup)
+    @parallel (1:nj) bcdT_left_convection!(dT, T, Tair, α, k, dx, hvert)
+    @parallel (1:nj) bcdT_right_convection!(dT, T, Tair, α, k, dx, hvert)
+    
+    # keep bed constant temperature
+    @parallel (1:ni) bc_horizontal_dirichlet!(dT, 0, jbedbot)
+    @parallel (1:ni) bc_horizontal_dirichlet!(dT, 0, jbedtop)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(dT, 0, 1)
+    @parallel (1:jbedtop) bc_vertical_dirichlet!(dT, 0, ni)
 end
 
 function coarse_grain(kmc::KineticMonteCarlo)
@@ -693,6 +766,9 @@ function main2(pargs)
     plot_size = pargs["plotsize"]
     outdir = pargs["outdir"]
     mkpath(outdir)
+    if pargs["cleandir"]
+        foreach(rm, readdir(outdir, join=true))
+    end
     figtype = pargs["figtype"]
     A = pargs["KA"]
     @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
@@ -738,10 +814,10 @@ function main2(pargs)
     =#
     clims = (Tair, T0)
     climsχ = (-ndirs-1, ndirs+1)
-    plot_len, plot_width = if ℓx > ℓy
-	    plot_size, round(Int, plot_size*ℓy/ℓx)
+    plot_len, plot_width = if ni > nj
+	    plot_size, round(Int, plot_size*nj/ni)
     else
-	    round(Int, plot_size*ℓx/ℓy), plot_size
+	    round(Int, plot_size*ni/nj), plot_size
     end
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, τc, maxdt, maxΔt,
@@ -752,10 +828,20 @@ function main2(pargs)
     @show dx, dy, dx / dy, ℓx, ℓy, ℓx / ℓy
     @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0, ℓx / kmc.v0
 
-    bc_curry!(T) = if pargs["top-insulated"]
-        bc_p_insulated!(T, Tbed, 1, jbed, Tair, nj)
+    hvert, hup = pargs["h-vert"], pargs["h-up"]
+    bc_curry!, bcdT_curry! = if pargs["top-insulated"]
+        @warn("Insulated boundary condition is deprecated")
+        (
+           (T) -> bc_p_insulated!(T, Tbed, 1, max(jbed, 1), Tair, nj), 
+           (dT) -> return
+        )
     else
-        bc_p_open!(T, Tbed, 1, jbed, Tair, nj)
+        α = kair / Cair
+        (
+           (T) -> bc_p_bed!(T, Tbed, 1, max(jbed, 1)),
+           (dT, T) -> bcdT_p_convection!(dT, T, 1, max(jbed, 1), Tair, α, kair, 
+                                         dx, hvert, dy, hup)
+        )
     end
 
     t_series = [];
@@ -774,7 +860,7 @@ function main2(pargs)
     time_since_plot = 0.0
     while (kmc.t <= maxtime && iter <= maxiter)
         iter += 1
-        Δt = do_event!(kmc, bc_curry!)
+        Δt = do_event!(kmc, bc_curry!, bcdT_curry!)
         time_since_out += Δt
         time_since_plot += Δt
         if (time_since_out > timeout)
