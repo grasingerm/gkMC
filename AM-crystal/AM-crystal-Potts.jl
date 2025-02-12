@@ -73,7 +73,7 @@ s = ArgParseSettings();
   "--Jm"
     help = "Interaction potential in reorientation (J / mol) between neighbors"
     arg_type = Float64 
-    default = 130.0
+    default = 1316.0
   "--turnoff-meltint"
     help = "flag for whether melting considers neighboring structure"
     action = :store_true
@@ -145,6 +145,10 @@ s = ArgParseSettings();
     help = "thickness of a single row (cm)"
     arg_type = Float64
     default = 0.05
+  "--wgap"
+    help = "Width of air gap (cm)"
+    arg_type = Float64
+    default = 0.05
   "--maxrow"
     help = "maximum number of rows"
     arg_type = Int
@@ -177,7 +181,7 @@ s = ArgParseSettings();
     arg_type = Float64
     default = 2.5e-3
   "--tint-algo"
-    help = "ODE solver for time integration (Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
+    help = "ODE solver for time integration (Rodas4P|Rodas5P|Rosenbrock23|Heun|Ralston|RK4|RK8|ROCK4|ROCK8|ESERK4|ESERK5|RadauIIA3|RadauIIA5|radau|Tsit5|TsitPap8|MSRK5|MSRK6|Stepanov5|Alshina6|BS3|ImplicitEuler|ImplicitMidpoint|Trapezoid|SDIRK2|Kvaerno3|Cash4)\n 4th order A-stable stiffly stable Rosenbrock method with a stiff-aware 3rd order interpolant | \n5th order A-stable stiffly stable Rosenbrock method with a stiff-aware 4th order interpolant | \nRosenbrock23 - 2/3 L-Stable Rosenbrock-W method which is good for very stiff equations with oscillations at low tolerances. 2nd order stiff-aware interpolation | \nHeun - explicit RK, 2nd order Heun's method with Euler adaptivity | \nRalston - explicit RK with 2nd order midpoint plus Euler adaptivity | \nRK4 - explicit 4th order RK | \nMSRK5 - explicit 5th order RK | \nMSRK6 - explicit 6th order RK | \nROCK2 - stabilized explicit 2nd order RK | \nROCK4 - stabilized explicit 4th order RK | \nROCK8 - stabilized explicit 8th order | \nESERK4 - stabilized explicit 4th order RK with extrapolation | \nESERK5 - stabilized explicit 5th order RK with extrapolation | \nRadauIIA3 - stable fully implicit 3rd order RK | \nRadauIIA5 - stable fully implicit 5th order RK | \nradau - implicit RK of variable order between 5 and 13 | \n Tsit5 - Tsitouras 5/4 Runge-Kutta method. (free 4th order interpolant) | \n TsitPap8 - Tsitouras-Papakostas 8/7 Runge-Kutta method | \n MSRK5 - Stepanov 5th-order Runge-Kutta method | \n MSRK6 - Stepanov 6th-order Runge-Kutta method | \n Stepanov5 - Stepanov adaptive 5th-order Runge-Kutta method | \n Alshina6 - Alshina 6th-order Runge-Kutta method | \n BS3 - Bogacki-Shampine 3/2 method | \n ImplicitEuler - 1st order implicit | \n ImplicitMidpoint - 2nd order implicit symplectic and symmetric | \n Trapezoid - 2nd order A stable, aka Crank-Nicolson | \n SDIRK2 - ABL stable 2nd order | \n Kvaerno3 - AL stable, stiffly accurate 3rd order | \n Cash4 - AL stable 4th order"
     arg_type = String
     default = "Tsit5"
   "--tint-reltol"
@@ -279,6 +283,7 @@ mutable struct KineticMonteCarlo
     ℓy::Float64
     ihead::Int
     jhead::UnitRange{Int}
+    igap::Int
     maxrow::Int
     nrow::Int
     lrhead::Bool
@@ -296,7 +301,8 @@ mutable struct KineticMonteCarlo
 end
 
 function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
-                           jbed::Int, jrow::Int, dt::Real, max_dt::Real, max_Δt::Real,
+                           jbed::Int, jrow::Int, igap::Int, dt::Real, 
+                           max_dt::Real, max_Δt::Real,
                            A::Real, EA::Real, M::Real, Tc::Real, Tg::Real, ΔT::Real,
                            Cbed::Real, C0::Real, Cair::Real,
                            kbed::Real, k0::Real, kair::Real, k0mult::Real,
@@ -335,7 +341,8 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
-                      dx, ℓx, dy, ℓy, 0, (jbed+1):jtop, maxrow, 1, true, T0, v0, 
+                      dx, ℓx, dy, ℓy, kmc.igap, (jbed+1):jtop, igap, maxrow, 
+                      1, true, T0, v0, 
                       jbed, C0, k0, J, Jm, pvecs, solver, has_meltint, d
                      )
 end
@@ -405,8 +412,8 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
             if !kmc.active[i, j]; continue; end
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
                 idx = (j-1)*ni + i
-                nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
-                dEA = kmc.J*nbrχ
+                nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                dEA = -kmc.J*nbrχ
                 rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.Tc - kmc.T[i, j]))
                 event_handlers[idx] = (crystallize!, (i, j))
                 if kmc.T[i, j] > kmc.Tg
@@ -420,12 +427,10 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                     else
                         kmc.nhat[i, j] += dθ
                     end
-                    old_nbrχ = 1 - nbrχ
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
                     dE = -kmc.Jm * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - kmc.Jm/(kmc.T[i, j] - kmc.Tg))
-                    #rates[idx+nsites] = kmc.M*exp(-1/(kmc.T[i, j] - kmc.Tg))
+                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - abs(kmc.Jm)/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
@@ -504,12 +509,12 @@ function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
     ni, nj = size(kmc.T)
     if kmc.nrow <= kmc.maxrow && kmc.jhead.stop <= nj
         if kmc.lrhead
-            new_ihead = min(round(Int, kmc.v0*kmc.trow / kmc.dx), ni)
+            new_ihead = min(round(Int, kmc.v0*kmc.trow / kmc.dx)+kmc.igap, ni-kmc.igap)
             if new_ihead > kmc.ihead
                 deposit!(kmc, (kmc.ihead+1):new_ihead, kmc.jhead)
                 kmc.ihead = new_ihead
             end
-            if kmc.ihead == ni # start a new row
+            if kmc.ihead == ni-kmc.igap # start a new row
                 jrow = kmc.jhead.stop - kmc.jhead.start
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = false
@@ -520,12 +525,12 @@ function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
                 @show kmc.lrhead, kmc.jhead, kmc.ihead, kmc.nrow, kmc.maxrow, nj
             end
         else
-            new_ihead = max(round(Int, ni - kmc.v0*kmc.trow / kmc.dx), 1)
+            new_ihead = max(round(Int, ni - kmc.igap - kmc.v0*kmc.trow / kmc.dx), kmc.igap)
             if new_ihead < kmc.ihead
                 deposit!(kmc, new_ihead:(kmc.ihead-1), kmc.jhead)
                 kmc.ihead = new_ihead
             end
-            if kmc.ihead == 1 # start a new row
+            if kmc.ihead == kmc.igap # start a new row
                 jrow = kmc.jhead.stop - kmc.jhead.start
                 kmc.jhead = (kmc.jhead.stop+1):(kmc.jhead.stop+jrow+1)
                 kmc.lrhead = true
@@ -780,6 +785,7 @@ function main2(pargs)
     nj = pargs["nj"]
     tbed = pargs["tbed"]
     trow = pargs["trow"]
+    wgap = pargs["wgap"]
     maxrow = pargs["maxrow"]
     v0 = pargs["v0"]
     maxdt = pargs["max-dt"]
@@ -790,7 +796,8 @@ function main2(pargs)
     @show dx = ℓx/(ni-1)                  
     @show dy = ℓy/(nj-1)                  
     @show jbed = round(Int, tbed / dy)
-    @show jrow = round(Int, trow / dy)
+    @show jrow = max(1, round(Int, trow / dy))
+    @show igap = ceil(Int, trow / dy)
     xs = 0:dx:ℓx
     ys = 0:dy:ℓy
     τc = 1e-0
@@ -820,7 +827,7 @@ function main2(pargs)
 	    round(Int, plot_size*ni/nj), plot_size
     end
 
-    kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, τc, maxdt, maxΔt,
+    kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, igap, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, k0mult,
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
