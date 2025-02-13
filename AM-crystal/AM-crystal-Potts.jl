@@ -222,7 +222,7 @@ s = ArgParseSettings();
   "--figtype"
     help = "figure type"
     arg_type = String
-    default = "pdf"
+    default = "png"
   "--doplot"
     help = "do plots"
     action = :store_true
@@ -341,7 +341,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     jtop = min(jbed+jrow, nj)
     KineticMonteCarlo(0.0, dt, 0.0, max_dt, max_Δt, χ, nhat, active, 
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
-                      dx, ℓx, dy, ℓy, kmc.igap, (jbed+1):jtop, igap, maxrow, 
+                      dx, ℓx, dy, ℓy, igap, (jbed+1):jtop, igap, maxrow, 
                       1, true, T0, v0, 
                       jbed, C0, k0, J, Jm, pvecs, solver, has_meltint, d
                      )
@@ -410,8 +410,8 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     for j=1:nj
         Threads.@threads for i=1:ni
             if !kmc.active[i, j]; continue; end
+            idx = (j-1)*ni + i
             if !kmc.χ[i, j] && kmc.T[i, j] < kmc.Tc
-                idx = (j-1)*ni + i
                 nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                 dEA = -kmc.J*nbrχ
                 rates[idx] = kmc.A*exp(-(kmc.EA + dEA)/(kmc.Tc - kmc.T[i, j]))
@@ -434,10 +434,9 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
-                idx = (j-1)*ni + i
                 dEA = if kmc.has_meltint
-                    nbrχ = (1 - status_crystal_nbrs(kmc, i, j, ni, nj))
-                    kmc.J*nbrχ
+                    nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
+                    -kmc.J*nbrχ
                 else
                     0
                 end
