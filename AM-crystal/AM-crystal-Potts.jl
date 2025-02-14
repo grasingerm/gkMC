@@ -403,7 +403,7 @@ get_ndirs(kmc) = size(kmc.pvecs, 2)
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     ni, nj = size(kmc.χ)
     nsites = ni*nj
-    nevents = 2*nsites + 1
+    nevents = 2*nsites
     event_handlers = Vector{Any}(undef, nevents)
     rates = zeros(nevents)
 
@@ -430,7 +430,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
                     dE = -kmc.Jm * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - abs(kmc.Jm)/(kmc.T[i, j] - kmc.Tg))
+                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - (kmc.Jm / 2)/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
@@ -578,16 +578,19 @@ end
 end
 
 @parallel_indices (j) function bcdT_left_convection!(dT, T, Tair, α, k, dx, h)
+    #@show "bcdT_left_convection!", Tair, α, k, dx, h
     dT[1, j] = α * ((T[2,j] - T[1,j])/dx^2) - (α*h/(k*dx))*(T[1,j] - Tair)
     return
 end
 
 @parallel_indices (j) function bcdT_right_convection!(dT, T, Tair, α, k, dx, h)
+    #@show "bcdT_right_convection!", Tair, α, k, dx, h
     dT[end, j] = α * ((T[end-1,j] - T[end,j])/dx^2) - (α*h/(k*dx))*(T[end,j] - Tair)
     return
 end
 
 @parallel_indices (i) function bcdT_top_convection!(dT, T, Tair, α, k, dy, h)
+    #@show "bcdT_top_convection!", Tair, α, k, dy, h
     dT[i, end] = α * ((T[i,end-1] - T[i,end])/dy^2) - (α*h/(k*dy))*(T[i,end] - Tair)
     return
 end
@@ -623,6 +626,7 @@ function bc_p_open!(T, Tb, jbedbot, jbedtop, Tair, jair)
 end
 
 function bc_p_bed!(T, Tb, jbedbot, jbedtop)
+    #@show "bc_p_bed!", Tb, jbedbot, jbedtop
     ni, nj = size(T)
 
     # keep bed constant temperature
@@ -633,6 +637,7 @@ function bc_p_bed!(T, Tb, jbedbot, jbedtop)
 end
 
 function bcdT_p_convection!(dT, T, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup)
+    #@show "bcdT_p_convection!", jbedbot, jbedtop, Tair, α, k, dx, hvert, dy, hup
     ni, nj = size(dT)
 
     # convection boundary conditions
@@ -775,7 +780,7 @@ function main2(pargs)
     end
     figtype = pargs["figtype"]
     A = pargs["KA"]
-    @show EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
+    @show  EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     Tc = pargs["Tc"]
     Tg = pargs["Tg"]
     M = pargs["M"]
@@ -792,11 +797,11 @@ function main2(pargs)
     ℓx = pargs["lx"]
     ℓy = pargs["ly"]
     σ_init = pargs["sigma-init"]
-    @show dx = ℓx/(ni-1)                  
-    @show dy = ℓy/(nj-1)                  
-    @show jbed = round(Int, tbed / dy)
-    @show jrow = max(1, round(Int, trow / dy))
-    @show igap = ceil(Int, trow / dy)
+    @show  dx = ℓx/(ni-1)                  
+    @show  dy = ℓy/(nj-1)                  
+    @show  jbed = round(Int, tbed / dy)
+    @show  jrow = max(1, round(Int, trow / dy))
+    @show  igap = ceil(Int, trow / dy)
     xs = 0:dx:ℓx
     ys = 0:dy:ℓy
     τc = 1e-0
@@ -842,11 +847,10 @@ function main2(pargs)
            (dT) -> return
         )
     else
-        α = kair / Cair
         (
            (T) -> bc_p_bed!(T, Tbed, 1, max(jbed, 1)),
-           (dT, T) -> bcdT_p_convection!(dT, T, 1, max(jbed, 1), Tair, α, kair, 
-                                         dx, hvert, dy, hup)
+           (dT, T) -> bcdT_p_convection!(dT, T, 1, max(jbed, 1), Tair, 
+                                         kair / Cair, kair, dx, hvert, dy, hup)
         )
     end
 
