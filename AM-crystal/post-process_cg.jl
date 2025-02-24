@@ -1,6 +1,10 @@
 using Glob
 using DelimitedFiles
 
+if length(ARGS) < 1
+    @info("usage: julia post-process_cg.jl DATADIR")
+    exit(-1)
+end
 datadir = ARGS[1]
 
 cgs = map(datafile -> begin
