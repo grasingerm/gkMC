@@ -61,11 +61,11 @@ s = ArgParseSettings();
   "--EA"
     help = "Activation energy (J / mol); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64 
-    default = 1316.0
+    default = 1974.0
   "--M"
     help = "Rotational mobility constant"
     arg_type = Float64 
-    default = 1.0
+    default = 100.0
   "--J"
     help = "Interaction potential in activation energy (J / mol) between neighbors"
     arg_type = Float64 
@@ -84,7 +84,7 @@ s = ArgParseSettings();
   "--sigma-init"
     help = "Standard deviation of initial print state"
     arg_type = Float64 
-    default = Inf
+    default = 1.0
   "--KA"
     help = "Crystallization rate constant; default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64 
