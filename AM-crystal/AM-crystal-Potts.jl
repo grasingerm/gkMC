@@ -74,6 +74,9 @@ s = ArgParseSettings();
     help = "Interaction potential in reorientation (J / mol) between neighbors"
     arg_type = Float64 
     default = 1316.0
+  "--amorphint"
+    help = "Interaction potential with amorphous phase as well"
+    action = :store_true
   "--turnoff-meltint"
     help = "flag for whether melting considers neighboring structure"
     action = :store_true
@@ -296,6 +299,7 @@ mutable struct KineticMonteCarlo
     Jm::Float64
     pvecs::Matrix
     solver::Function
+    has_amorphint::Bool
     has_meltint::Bool
     d_init::Distribution
 end
@@ -308,7 +312,7 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                            kbed::Real, k0::Real, kair::Real, k0mult::Real,
                            Tbed::Real, T0::Real, Tair::Real, v0::Real,
                            J::Real, Jm::Real, ndirs::Int, σ_init::Float64, maxrow::Int,
-                           solver::Function, has_meltint::Bool)
+                           solver::Function, has_amorphint::Bool, has_meltint::Bool)
     ni, nj = length(0:dx:ℓx), length(0:dy:ℓy)
     χ = fill(false, ni, nj)
     # randomly initialize polymer directions based on truncated Gaussian
@@ -343,7 +347,8 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
                       A, EA, M, Tc, Tg, ΔT, T, Cρ, k, k0mult,
                       dx, ℓx, dy, ℓy, igap, (jbed+1):jtop, igap, maxrow, 
                       1, true, T0, v0, 
-                      jbed, C0, k0, J, Jm, pvecs, solver, has_meltint, d
+                      jbed, C0, k0, J, Jm, pvecs, solver, has_amorphint, 
+                      has_meltint, d
                      )
 end
 
@@ -387,14 +392,10 @@ end
 
 function status_crystal_nbrs(kmc, i, j, ni, nj)
     (
-         ((i > 1) ?  ((dot(kmc.pvecs[kmc.nhat[i-1, j]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((i < ni) ? ((dot(kmc.pvecs[kmc.nhat[i+1, j]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((j > 1) ?  ((dot(kmc.pvecs[kmc.nhat[i, j-1]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((j < nj) ? ((dot(kmc.pvecs[kmc.nhat[i, j+1]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
+     ((i > 1 && (kmc.has_amorphint || kmc.χ[i-1, j])) ?  ((dot(kmc.pvecs[kmc.nhat[i-1, j]], kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+     ((i < ni && (kmc.has_amorphint || kmc.χ[i+1, j])) ? ((dot(kmc.pvecs[kmc.nhat[i+1, j]], kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+     ((j > 1 && (kmc.has_amorphint || kmc.χ[i, j-1])) ?  ((dot(kmc.pvecs[kmc.nhat[i, j-1]], kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
+     ((j < nj && (kmc.has_amorphint || kmc.χ[i, j+1])) ? ((dot(kmc.pvecs[kmc.nhat[i, j+1]], kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
     ) / 8.0
 end
 
@@ -811,6 +812,7 @@ function main2(pargs)
     Tbed, T0, Tair = pargs["Tbed"], pargs["T0"], pargs["Tair"]
     @show J = uconvert(Unitful.NoUnits, pargs["J"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
+    @show has_amorphint = pargs["amorphint"]
     @show has_meltint = !(pargs["turnoff-meltint"])
     ndirs = pargs["ndirs"]
     YAML.write_file(joinpath(outdir, "args.yml"), pargs)
@@ -835,7 +837,7 @@ function main2(pargs)
                             A, EA, M, Tc, Tg, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, k0mult,
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
-                            init_solver(pargs), has_meltint)
+                            init_solver(pargs), has_amorphint, has_meltint)
     @show dx, dy, dx / dy, ℓx, ℓy, ℓx / ℓy
     @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0, ℓx / kmc.v0
 
