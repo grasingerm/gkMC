@@ -8,14 +8,92 @@ import functools # For partial function application
 import sys
 import time
 import os
-
-# 1. Define the Objective Function (Calling Julia Script Simulation)
+import glob
 
 # --- Configuration ---
-JULIA_EXECUTABLE_PATH = "/home/grasinmj/julia-1.10.4/bin/julia"  # <--- **CHANGE THIS TO YOUR JULIA EXECUTABLE PATH** (e.g., /usr/bin/julia, C:\Julia\bin\julia.exe)
+JULIA_EXECUTABLE_PATH = "/home/grasinmj/julia-1.11.3/bin/julia"  # <--- **CHANGE THIS TO YOUR JULIA EXECUTABLE PATH** (e.g., /usr/bin/julia, C:\Julia\bin\julia.exe)
 JULIA_SCRIPT_PATH = "AM-crystal-Potts.jl"  # <--- **CHANGE THIS TO YOUR JULIA SCRIPT PATH**
 JULIA_OPTS = ["-O","3","-t","4"]
 # --- End Configuration ---
+
+# 0.a Read in simulation data
+def read_crystallization(outdir):
+    # 3.b Run command to post-process simulation
+    command = [
+        JULIA_EXECUTABLE_PATH,  # Path to the Julia interpreter
+        "post-process_cg.jl",     # Path to your Julia simulation script
+        outdir
+    ]
+    
+    print(os.getpid(), "Executing command:", " ".join(command))
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+
+    # 4. Process the Output from Julia
+    output_str = result.stdout.strip()
+    print(os.getpid(), "Julia Script Output:", output_str) # Print Julia's raw output
+
+    crystallization_degree = float(output_str)  # Assuming Julia script prints the degree
+
+    # Ensure crystallization degree is within a realistic range
+    #crystallization_degree = np.clip(crystallization_degree, 0, 1)
+
+    return crystallization_degree
+
+
+# 0.b Read in previous simulation data
+xinit_ = []
+yinit_ = []
+directory_pattern = "T0-*_Tbed-*_v0-*_trow-*_bopt"  # Your directory pattern
+search_path = "data"  # Current directory as the starting search path, you can change this
+
+# Construct the full pattern to search within the directory
+full_pattern = os.path.join(search_path, directory_pattern)
+
+# Use glob.glob() to find all paths matching the pattern
+matching_paths = glob.glob(full_pattern)
+
+# Loop through the matching paths and filter for directories
+for path in matching_paths:
+    if os.path.isdir(path):  # Check if it's a directory
+        print(f"Found directory: {path}")
+        # --- Your code to process each matching directory goes here ---
+        # For example, you might want to extract parameters from the directory name:
+        directory_name = os.path.basename(path) # Get just the directory name part
+        parts = directory_name.split('_') # Split by underscore
+
+        try:
+            T0_value    =    float(parts[0].split('-')[1]) / 10.0       # Extract value after "T0-"
+            Tbed_value  =    float(parts[1].split('-')[1]) / 10.0       # Extract value after "Tbed-"
+            v0_value    =    float(parts[2].split('-')[1]) / 100.0      # Extract value after "v0-"
+            trow_value  =    float(parts[3].split('-')[1]) / 10000.0    # Extract value after "trow-"
+
+            print(f"  Extracted parameters:")
+            print(f"    T0: {T0_value}, Tbed: {Tbed_value}, v0: {v0_value}, trow: {trow_value}")
+
+            # --- Further processing within each directory ---
+            # e.g., reading data files from within the directory
+            # data_file_path = os.path.join(path, "simulation_output.txt")
+            # if os.path.isfile(data_file_path):
+            #     with open(data_file_path, 'r') as data_file:
+            #         # ... process data_file ...
+            
+            crystallization_degree = read_crystallization(path)
+            print(f"    crystallization degree: {crystallization_degree}")
+            xinit_.append([T0_value, Tbed_value, v0_value, trow_value])
+            yinit_.append(-crystallization_degree)
+
+        except IndexError:
+            print(f"  Warning: Could not fully parse directory name: {directory_name}")
+
+
+    else:
+        print(f"Warning: Path '{path}' matches pattern but is NOT a directory. Skipping.")
+
+print("\nFinished processing matching directories.")
+print("    x0 = ", xinit_)
+print("    y0 = ", yinit_)
+
+# 1. Define the Objective Function (Calling Julia Script Simulation)
 
 def simulate_crystallization(params):
     """
@@ -35,7 +113,7 @@ def simulate_crystallization(params):
     print(os.getpid(), f"Value of params: {params}") 
 
     nozzle_temp, bed_temp, velocity, thickness = params
-    outdir = "data/T0-{:04d}_Tbed-{:04d}_v0-{:04d}_trow-{:04d}".format(int(10*nozzle_temp), int(10*bed_temp), int(100*velocity), int(10000*thickness))
+    outdir = "data/T0-{:04d}_Tbed-{:04d}_v0-{:04d}_trow-{:04d}_bopt".format(int(10*nozzle_temp), int(10*bed_temp), int(100*velocity), int(10000*thickness))
 
     try:
         # 2. Construct the Command to Run the Julia Script
@@ -80,24 +158,8 @@ def simulate_crystallization(params):
             print(os.getpid(), "Stderr Output:\n", stderr_output)
             return 1.0 # Penalize failure
 
-	# 3.b Run command to post-process simulation
-        command2 = [
-            JULIA_EXECUTABLE_PATH,  # Path to the Julia interpreter
-            "post-process_cg.jl",     # Path to your Julia simulation script
-            outdir
-        ]
-        
-        print(os.getpid(), "Executing command:", " ".join(command2))
-        result = subprocess.run(command2, capture_output=True, text=True, check=True)
-
-        # 4. Process the Output from Julia
-        output_str = result.stdout.strip()
-        print(os.getpid(), "Julia Script Output:", output_str) # Print Julia's raw output
-
-        crystallization_degree = float(output_str)  # Assuming Julia script prints the degree
-
-        # Ensure crystallization degree is within a realistic range
-        #crystallization_degree = np.clip(crystallization_degree, 0, 1)
+	    # 3.b Run command to post-process simulation
+        crystallization_degree = read_crystallization(outdir)
 
 
     except subprocess.CalledProcessError as e:
@@ -123,6 +185,19 @@ def simulate_crystallization(params):
     print(os.getpid(), "cost: ", type(-crystallization_degree), " ,", -crystallization_degree)
     return -crystallization_degree  # Return NEGATIVE for minimization
 
+# 2. Define the Search Space (Parameter Bounds)
+param_bounds = [
+    Real(low=617.0, high=750.0, name='nozzle_temp'),     # Nozzle temperature (°K)
+    Real(low=250.0, high=600.0, name='bed_temp'),        # Bed temperature (°K)
+    Real(low=0.25, high=5.0, name='velocity'),           # Printer head velocity (cm/s, adjust range and units)
+    Real(low=0.01, high=0.07, name='thickness')          # Row thickness (cm, adjust range and units)
+]
+# Explanation of Real():  skopt.space.Real defines a continuous parameter.
+#  - low: Minimum allowed value.
+#  - high: Maximum allowed value.
+#  - name: Name of the parameter (for readability and plotting).
+# You can use Integer() for integer parameters if any of your parameters are discrete.
+
 def single_bo_run(run_id, n_calls_per_run, random_seed):
     """
     Performs a single Bayesian Optimization run.
@@ -138,21 +213,6 @@ def single_bo_run(run_id, n_calls_per_run, random_seed):
     """
     print(f"\n--- Starting BO Run ID: {run_id} ---")
 
-    # 2. Define the Search Space (Parameter Bounds)
-
-    param_bounds = [
-        Real(low=617.0, high=750.0, name='nozzle_temp'),     # Nozzle temperature (°K)
-        Real(low=250.0, high=600.0, name='bed_temp'),        # Bed temperature (°K)
-        Real(low=0.25, high=5.0, name='velocity'),           # Printer head velocity (cm/s, adjust range and units)
-        Real(low=0.01, high=0.07, name='thickness')          # Row thickness (cm, adjust range and units)
-    ]
-    # Explanation of Real():  skopt.space.Real defines a continuous parameter.
-    #  - low: Minimum allowed value.
-    #  - high: Maximum allowed value.
-    #  - name: Name of the parameter (for readability and plotting).
-    # You can use Integer() for integer parameters if any of your parameters are discrete.
-
-
     # 3. Perform Bayesian Optimization
     result = gp_minimize(
         simulate_crystallization,
@@ -161,6 +221,8 @@ def single_bo_run(run_id, n_calls_per_run, random_seed):
         n_initial_points=10, # Keep initial points
         random_state=random_seed, # Use a specific random seed for each run
         acq_func="EI",
+        x0=xinit_,
+        y0=yinit_
     )
 
     print(f"\n--- Finished BO Run ID: {run_id} ---")
@@ -170,11 +232,18 @@ def single_bo_run(run_id, n_calls_per_run, random_seed):
 
 n_parallel_runs = 8  # Number of independent Bayesian Optimization runs to execute in parallel
 n_calls_per_run = 25 # Number of function evaluations PER RUN. Total evaluations = n_parallel_runs * n_calls_per_run
+n_calls_min = 3
+n_init = len(xinit_)
+n_calls = max(n_calls_per_run - n_init, n_calls_min)
 
 # 5. Execute Parallel Bayesian Optimization Runs using multiprocessing
 
 if __name__ == '__main__': # Recommended for multiprocessing in Python
 
+    print(f'Found {n_init} initial data points')
+    print(f'n_calls_min = {n_calls_min}')
+    print(f'n_calls = {n_calls}')
+    
     parallel_run_args = [
         (run_id, n_calls_per_run, (time.time_ns() + run_id) % (2**32)) # Arguments for each run
         for run_id in range(n_parallel_runs)
