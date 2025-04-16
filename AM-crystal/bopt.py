@@ -198,7 +198,7 @@ param_bounds = [
 #  - name: Name of the parameter (for readability and plotting).
 # You can use Integer() for integer parameters if any of your parameters are discrete.
 
-def single_bo_run(run_id, n_calls_per_run, random_seed):
+def single_bo_run(run_id, n_calls_per_run, n_initial_points, random_seed):
     """
     Performs a single Bayesian Optimization run.
 
@@ -213,12 +213,16 @@ def single_bo_run(run_id, n_calls_per_run, random_seed):
     """
     print(f"\n--- Starting BO Run ID: {run_id} ---")
 
+    global xinit_
+    global yinit_
+    print("passing {} initial points".format(len(xinit_)))
+
     # 3. Perform Bayesian Optimization
     result = gp_minimize(
         simulate_crystallization,
         dimensions=param_bounds,
         n_calls=n_calls_per_run,
-        n_initial_points=10, # Keep initial points
+        n_initial_points=n_initial_points, # Keep initial points
         random_state=random_seed, # Use a specific random seed for each run
         acq_func="EI",
         x0=xinit_,
@@ -232,8 +236,9 @@ def single_bo_run(run_id, n_calls_per_run, random_seed):
 
 n_parallel_runs = 8  # Number of independent Bayesian Optimization runs to execute in parallel
 n_calls_per_run = 25 # Number of function evaluations PER RUN. Total evaluations = n_parallel_runs * n_calls_per_run
-n_calls_min = 3
+n_calls_min = 1
 n_init = len(xinit_)
+n_initial_points = max(10 - n_init, 0)
 n_calls = max(n_calls_per_run - n_init, n_calls_min)
 
 # 5. Execute Parallel Bayesian Optimization Runs using multiprocessing
@@ -243,9 +248,11 @@ if __name__ == '__main__': # Recommended for multiprocessing in Python
     print(f'Found {n_init} initial data points')
     print(f'n_calls_min = {n_calls_min}')
     print(f'n_calls = {n_calls}')
+    print(f'n_initial_points = {n_initial_points}')
     
     parallel_run_args = [
-        (run_id, n_calls_per_run, (time.time_ns() + run_id) % (2**32)) # Arguments for each run
+        (run_id, n_calls_per_run, n_initial_points, 
+            (time.time_ns() + run_id) % (2**32)) # Arguments for each run
         for run_id in range(n_parallel_runs)
     ]
 
