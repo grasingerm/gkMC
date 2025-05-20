@@ -6,25 +6,24 @@ using Distributed;
 @everywhere fmt_int(x) = @sprintf("%03d", x);
 
 @everywhere function prefix(T0, Tbed, EA, J, Jm, M, σ, B)
-    error("Not yet implemented")
-    "Tbed-$(fmt(case[:E0]))_K1-$(fmt(case[:K1]))_K2-$(fmt(case[:K2]))_kT-$(fmt(case[:kT]))_Fz-$(fmt(case[:Fz]))_Fx-$(fmt(case[:Fx]))_n-$(fmt(case[:n]))_b-$(fmt(case[:b]))_kappa-$(fmt(case[:kappa]))_run-$(case[:run])";
+    "T0-$(fmt(T0))_Tbed-$(fmt(Tbed))_EA-$(fmt(EA))_J-$(fmt(J))_Jm-$(fmt(Jm))_M-$(fmt(M))_sigma-$(fmt(σ))_B-$(fmt(B))"
 end
 
 workdir = if length(ARGS) > 0
     ARGS[1]
 else
-    @info "Usage: julia lhs_study.jl workdir <nsamples>"
+    @info "Usage: julia lhs_study.jl workdir <nsamples> <ngens>"
     exit(-1)
 end
 
 nsamples = if length(ARGS) > 1
-    convert(Int, ARGS[2])
+    parse(Int, ARGS[2])
 else
     256
 end
 
 ngens = if length(ARGS) > 2
-    convert(Int, ARGS[3])
+    parse(Int, ARGS[3])
 else
     7
 end
@@ -58,10 +57,12 @@ pmap(i -> begin
          T0 = T0s[1]
          Tbed = Tbeds[1]
          EA, J, Jm, M, σ, B = scaled_plan[i, :]
-         outdir = joinpath(workdir, prefix(J, Jm, M, σ, B))
+         outdir = joinpath(workdir, prefix(T0, Tbed, EA, J, Jm, M, σ, B))
          if !isdir(outdir)
              println("Running case: ($T0, $Tbed, $EA, $J, $Jm, $M, $σ, $B)")
-             command = `julia -t 1 -O 3 AM-crystal-Potts.jl `;
+             command = `julia -t 1 -O 3 AM-crystal-Potts.jl --trow $trow --v0 $v0 --lx $lx --ly $ly --ni $ni --nj $nj --T0 $T0 --Tbed $Tbed --EA $EA --J $J --Jm $Jm --M $M --sigma-init $σ --B $B --outdir $outdir`;
+             output = read(command, String);
+             write(joinpath(outdir, "stdout.txt"), output); 
          else
              println("Case: ($T0, $Tbed, $EA, $J, $Jm, $M, $σ, $B) has already been run.")
          end

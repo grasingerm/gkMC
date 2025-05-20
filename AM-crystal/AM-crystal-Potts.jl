@@ -58,6 +58,10 @@ s = ArgParseSettings();
     help = "Glass transition temperature of PEEK (K)"
     arg_type = Float64
     default = 416.15
+  "--B"
+    help = "Mobility dropoff factor"
+    arg_type = Float64
+    default = (1316.0 / 2)
   "--EA"
     help = "Activation energy (J / mol); default value from (Bessard et al, J. Therm. Anal. Calorim. 2014)"
     arg_type = Float64 
@@ -275,6 +279,7 @@ mutable struct KineticMonteCarlo
     M::Float64
     Tc::Float64
     Tg::Float64
+    B::Float64
     ΔT::Float64
     T
     Cρ
@@ -431,7 +436,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
                     dE = -kmc.Jm * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - (kmc.Jm / 2)/(kmc.T[i, j] - kmc.Tg))
+                    rates[idx+nsites] = kmc.M*exp(-dE/kmc.T[i, j] - kmc.B/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] && kmc.T[i, j] > kmc.Tc
@@ -784,6 +789,7 @@ function main2(pargs)
     @show  EA = uconvert(Unitful.NoUnits, pargs["EA"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     Tc = pargs["Tc"]
     Tg = pargs["Tg"]
+    B = pargs["B"]
     M = pargs["M"]
     ΔT = pargs["dT"]
     ni = pargs["ni"]
@@ -834,7 +840,7 @@ function main2(pargs)
     end
 
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, igap, τc, maxdt, maxΔt,
-                            A, EA, M, Tc, Tg, ΔT, 
+                            A, EA, M, Tc, Tg, B, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, k0mult,
                             Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
                             init_solver(pargs), has_amorphint, has_meltint)
