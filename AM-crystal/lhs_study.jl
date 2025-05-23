@@ -1,6 +1,6 @@
-using LatinHypercubeSampling;
 using Distributed;
 @everywhere using Printf;
+@everywhere using LatinHypercubeSampling;
 
 @everywhere fmt(x) = @sprintf("%07d", round(Int, 1e3*x));
 @everywhere fmt_int(x) = @sprintf("%03d", x);
@@ -60,7 +60,7 @@ pmap(i -> begin
          outdir = joinpath(workdir, prefix(T0, Tbed, EA, J, Jm, M, σ, B))
          if !isdir(outdir)
              println("Running case: ($T0, $Tbed, $EA, $J, $Jm, $M, $σ, $B)")
-             command = `julia -t 1 -O 3 AM-crystal-Potts.jl --trow $trow --v0 $v0 --lx $lx --ly $ly --ni $ni --nj $nj --T0 $T0 --Tbed $Tbed --EA $EA --J $J --Jm $Jm --M $M --sigma-init $σ --B $B --outdir $outdir`;
+             command = `/home/grasinmj/julia-1.11.3/bin/julia -t 1 -O 3 AM-crystal-Potts.jl --trow $trow --v0 $v0 --lx $lx --ly $ly --ni $ni --nj $nj --T0 $T0 --Tbed $Tbed --EA $EA --J $J --Jm $Jm --M $M --sigma-init $σ --B $B --outdir $outdir`;
              output = read(command, String);
              write(joinpath(outdir, "stdout.txt"), output); 
          else
