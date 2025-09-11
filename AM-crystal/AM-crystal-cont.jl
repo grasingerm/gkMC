@@ -317,12 +317,12 @@ function KineticMonteCarlo(ℓx::Real, dx::Real, ℓy::Real, dy::Real,
     χ = fill(0.0, ni, nj)
     # randomly initialize polymer directions based on truncated Gaussian
     d = if σ_init == Inf
-        Uniform(0.0, ndirs)
+        Uniform(-π/2, π/2)
     else
-        Truncated(Normal(ndirs / 2, σ_init), 0.0, ndirs)
+        Truncated(Normal(-π/4, σ_init), -π/2, π/2)
     end
     #nhat = map(x -> ceil(Int, x), rand(d, ni, nj))
-    nhat = rand(Uniform(-π, π), ni, nj)
+    nhat = rand(Uniform(-π/2, π/2), ni, nj)
     active = fill(false, ni, nj)
     T = @zeros(ni, nj)
     k = @zeros(ni, nj)
@@ -393,8 +393,6 @@ function status_crystal_nbrs(kmc, i, j, ni, nj)
 end
 =#
 
-get_ndirs(kmc) = size(kmc.pvecs, 2)
-
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     ni, nj = size(kmc.χ)
     nsites = ni*nj
@@ -414,19 +412,18 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                 event_handlers[idx] = (crystallize!, (i, j, dχ))
                 if kmc.T[i, j] > kmc.Tg
                     nhat_temp = kmc.nhat[i, j]
-                    dθ = 0.5 - rand()
-                    nhat = if kmc.nhat[i, j] + dθ < 1
-                        kmc.nhat[i, j] += (dθ + get_ndirs(kmc))
-                    elseif kmc.nhat[i, j] + dθ > get_ndirs(kmc)
-                        newdir = mod(kmc.nhat[i, j] + dθ, get_ndirs(kmc))
-                        kmc.nhat[i, j] = (newdir == 0) ? get_ndirs(kmc) : newdir
+                    dθ = π*(0.5 - rand())
+                    nhat = if kmc.nhat[i, j] + dθ < -π/2
+                        kmc.nhat[i, j] += (dθ + 2*π)
+                    elseif kmc.nhat[i, j] + dθ > π/2
+                        kmc.nhat[i, j] += (dθ - 2*π)
                     else
                         kmc.nhat[i, j] += dθ
                     end
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
                     dE = -kmc.Jm * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = kmc.M*kmc.χ[i, j]*exp(-dE/kmc.T[i, j] - kmc.B/(kmc.T[i, j] - kmc.Tg))
+                    rates[idx+nsites] = kmc.M/dθ*kmc.χ[i, j]*exp(-dE/kmc.T[i, j] - kmc.B/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] > 0 && kmc.T[i, j] > kmc.Tc
@@ -436,8 +433,9 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                 else
                     0
                 end
-                rates[idx] = kmc.A*exp(-(kmc.EA - dEA)/(kmc.T[i, j] - kmc.Tc))
-                event_handlers[idx] = (melt!, (i, j))
+                dχ = rand()*(kmc.χ[i, j])
+                rates[idx] = kmc.A/dχ*exp(-(kmc.EA - dEA)/(kmc.T[i, j] - kmc.Tc))
+                event_handlers[idx] = (melt!, (i, j, dχ))
             end
         end
     end
@@ -451,24 +449,21 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     (rates=rates, event_handlers=event_handlers)
 end
 
-function reorient!(kmc::KineticMonteCarlo, i::Int, j::Int, nhat_idx::Int)
-    @assert !kmc.χ[i, j]
-    kmc.nhat[i, j] = nhat_idx
+function reorient!(kmc::KineticMonteCarlo, i::Int, j::Int, nhat::Real)
+    kmc.nhat[i, j] = nhat
 end
 
-function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int)
-    @assert !kmc.χ[i, j]
-    kmc.χ[i, j] = true
-    kmc.T[i, j] += kmc.ΔT
-    kmc.k[i, j] *= kmc.k0mult
+function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int, dχ::Real)
+    kmc.χ[i, j] += dχ
+    kmc.T[i, j] += dχ*kmc.ΔT
+    kmc.k[i, j] += dχ*(kmc.k0mult-1)*kmc.k0
 end
 
-function melt!(kmc::KineticMonteCarlo, i::Int, j::Int)
-    @assert kmc.χ[i, j]
-    kmc.χ[i, j] = false
-    kmc.nhat[i, j] = rand(1:get_ndirs(kmc))
-    kmc.T[i, j] -= kmc.ΔT
-    kmc.k[i, j] /= kmc.k0mult
+function melt!(kmc::KineticMonteCarlo, i::Int, j::Int, dχ::Real)
+    kmc.χ[i, j] -= dχ
+    kmc.nhat[i, j] = rand(Uniform(-π,π))
+    kmc.T[i, j] -= dχ*kmc.ΔT
+    kmc.k[i, j] -= dχ*(kmc.k0mult-1)*kmc.k0
 end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int}, 
@@ -481,14 +476,8 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
     kmc.Cρ[irange, jrange] .= kmc.Cρ0
     kmc.k[irange, jrange] .= kmc.k0
     kmc.active[irange, jrange] .= true
-    ndirs = get_ndirs(kmc)
-    lr::Int = (kmc.lrhead) ? 1 : 0
-    kmc.nhat[irange, jrange] = map(x -> begin
-                                   y = ceil(Int, x)
-                                   z = mod(y - lr*ndirs / 2, ndirs)
-                                   (z == 0) ? 8 : z
-                               end, 
-                               rand(kmc.d_init, length(irange), length(jrange)))
+    lr::Int = (kmc.lrhead) ? 1 : -1
+    kmc.nhat[irange, jrange] = lr*rand(kmc.d_init, length(irange), length(jrange))
 end
 
 function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
@@ -810,19 +799,11 @@ function main2(pargs)
     @show Jm = uconvert(Unitful.NoUnits, pargs["Jm"]*u"J / mol" / _NA / _kB / 1u"K")  # update this term based on material experimental data or temp relation?
     @show has_amorphint = pargs["amorphint"]
     @show has_meltint = !(pargs["turnoff-meltint"])
-    ndirs = pargs["ndirs"]
     YAML.write_file(joinpath(outdir, "args.yml"), pargs)
     #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
     pal = palette(:broc)
-    #pal = :RdPu 
-    #=pal = if 2 <= ndirs <= 11
-        Symbol("Paired_$(ndirs+1)")
-    else
-        :default
-    end
-    =#
     clims = (Tair, T0)
-    climsχ = (-ndirs-1, ndirs+1)
+    climsχ = (-π, π)
     plot_len, plot_width = if ni > nj
 	    plot_size, round(Int, plot_size*nj/ni)
     else
@@ -832,7 +813,7 @@ function main2(pargs)
     kmc = KineticMonteCarlo(ℓx, dx, ℓy, dy, jbed, jrow, igap, τc, maxdt, maxΔt,
                             A, EA, M, Tc, Tg, B, ΔT, 
                             Cbed, C0, Cair, kbed, k0, kair, k0mult,
-                            Tbed, T0, Tair, v0, J, Jm, ndirs, σ_init, maxrow,
+                            Tbed, T0, Tair, v0, J, Jm, σ_init, maxrow,
                             init_solver(pargs), has_amorphint, has_meltint)
     @show dx, dy, dx / dy, ℓx, ℓy, ℓx / ℓy
     @show kmc.ihead, kmc.jhead, kmc.maxrow, kmc.lrhead, kmc.v0, ℓx / kmc.v0
