@@ -370,16 +370,12 @@ function transfer_heat!(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
 end
 
 function status_crystal_nbrs(kmc, i, j, ni, nj)
-    (
-         ((i > 1) ?  (kmc.χ[i-1, j]*(dot(kmc.pvecs[kmc.nhat[i-1, j]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((i < ni) ? (kmc.χ[i+1, j]*(dot(kmc.pvecs[kmc.nhat[i+1, j]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((j > 1) ?  (kmc.χ[i, j-1]*(dot(kmc.pvecs[kmc.nhat[i, j-1]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0) +
-         ((j < nj) ? (kmc.χ[i, j+1]*(dot(kmc.pvecs[kmc.nhat[i, j+1]], 
-                                         kmc.pvecs[kmc.nhat[i, j]])+1)) : 0)
-    ) / 8.0
+    kmc.χ[i,j]*(
+         ((i > 1) ?  (kmc.χ[i-1, j]*cos(kmc.nhat[i-1, j]-kmc.nhat[i, j])) : 0) +
+         ((i < ni) ? (kmc.χ[i+1, j]*cos(kmc.nhat[i+1, j]-kmc.nhat[i, j])) : 0) +
+         ((j > 1) ?  (kmc.χ[i, j-1]*cos(kmc.nhat[i, j-1]-kmc.nhat[i, j])) : 0) +
+         ((j < nj) ? (kmc.χ[i, j+1]*cos(kmc.nhat[i, j+1]-kmc.nhat[i, j])) : 0)
+    ) / 4.0
 end
 
 #=
@@ -481,8 +477,18 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
 end
 
 function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
+    #=
+    ratesum = 0
+    events, rate_cumsum = while !(ratesum > 0)
+        events = kmc_events(kmc, bc!, bcdT!)
+        rate_cumsum = cumsum(events.rates)
+        ratesum = rate_cumsum[end]
+        events, rate_cumsum
+    end
+    =#
     events = kmc_events(kmc, bc!, bcdT!)
     rate_cumsum = cumsum(events.rates)
+    @assert rate_cumsum[end] > 0 "$(rate_cumsum[end]) not greater than 0 ? events = $events"
     choice_dec = rand(Uniform(0, rate_cumsum[end]))
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
     f, args = events.event_handlers[choice_idx]
@@ -638,6 +644,7 @@ function bcdT_p_convection!(dT, T, jbedbot, jbedtop, Tair, α, k, dx, hvert, dy,
 end
 
 function coarse_grain(kmc::KineticMonteCarlo)
+    #=
     cgij = zeros(size(kmc.χ))
     ni, nj = size(cgij)
     for i=2:ni-1 
@@ -746,6 +753,15 @@ function coarse_grain(kmc::KineticMonteCarlo)
                 ) / 4.0
 
    return cgij
+   =#
+   cgij = zeros(size(kmc.χ))
+   ni, nj = size(cgij)
+   for i=1:ni 
+       Threads.@threads for j=1:nj # interior
+           @inbounds cgij[i,j] = status_crystal_nbrs(kmc, i, j, ni, nj)
+       end
+   end
+   return cgij
 
 end
 
@@ -803,7 +819,7 @@ function main2(pargs)
     #pal = palette(ColorScheme([colorant"pink"; ColorSchemes.broc.colors]))
     pal = palette(:broc)
     clims = (Tair, T0)
-    climsχ = (-π, π)
+    climsχ = (-3*π/4, 3*π/4)
     plot_len, plot_width = if ni > nj
 	    plot_size, round(Int, plot_size*nj/ni)
     else
@@ -867,7 +883,7 @@ function main2(pargs)
                 display(p)
                 readline()
             end
-            χmult = map(x -> (x == 0) ? -1 : 1, kmc.χ[:, :])
+            #=
             χadd = map(x -> begin
                            if !x[2]
                                return 0
@@ -877,8 +893,11 @@ function main2(pargs)
                                return 1
                            end
                        end, zip(kmc.χ, kmc.active))
+            =#
             #p = heatmap(permutedims(kmc.χ[:, :, 1] .* (kmc.nhat[:, :, 1] .- ((ndirs+1)/2)) - (kmc.χ[:, :, 1] .- 1) .* (climsχ[1]-1)); c=pal, size=(plot_len, plot_width)) #, clims=climsχ)
-            p = heatmap(permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)); c=pal, size=(plot_len, plot_width), clims=climsχ)
+            χmult = kmc.χ[:, :, 1] .- 1/2
+            crystal_field = permutedims(kmc.active .* χmult .* (kmc.nhat .+ π))
+            p = heatmap(crystal_field; c=pal, size=(plot_len, plot_width), clims=climsχ)
             title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
             savefig(joinpath(outdir, "crystal-$iter.$figtype"))
             if showplot
@@ -896,8 +915,8 @@ function main2(pargs)
                 readline()
             end
             writedlm(joinpath(outdir, "temp-$iter.csv"), permutedims(kmc.T), ',')
-            writedlm(joinpath(outdir, "crystal-$iter.csv"), permutedims(kmc.active .* χmult .* (kmc.nhat + χadd)), ',')
-            writedlm(joinpath(outdir, "cg-crystal-$iter.csv"), permutedims(coarse_grain(kmc)), ',')
+            writedlm(joinpath(outdir, "crystal-$iter.csv"), crystal_field, ',')
+            writedlm(joinpath(outdir, "cg-crystal-$iter.csv"), cg, ',')
             time_since_plot = 0.0
         end
         if (time() - last_update > 15)
