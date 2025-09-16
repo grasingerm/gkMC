@@ -36,6 +36,8 @@ end
     return
 end
 
+@show const Ε = sqrt(eps())
+
 s = ArgParseSettings();
 @add_arg_table! s begin
   "--T0"
@@ -55,9 +57,9 @@ s = ArgParseSettings();
     arg_type = Float64
     default = 616.0
   "--Tg"
-    help = "Glass transition temperature of PEEK (K)"
+    help = "T∞ of PEEK, Usually Tg - 15K to 30K"
     arg_type = Float64
-    default = 416.15
+    default = 401.15
   "--B"
     help = "Mobility dropoff factor"
     arg_type = Float64
@@ -392,7 +394,7 @@ end
 function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
     ni, nj = size(kmc.χ)
     nsites = ni*nj
-    nevents = 2*nsites
+    nevents = 2*nsites+1
     event_handlers = Vector{Any}(undef, nevents)
     rates = zeros(nevents)
 
@@ -419,7 +421,7 @@ function kmc_events(kmc::KineticMonteCarlo, bc!::Function, bcdT!::Function)
                     new_nbrχ = status_crystal_nbrs(kmc, i, j, ni, nj)
                     kmc.nhat[i, j] = nhat_temp # reset
                     dE = -kmc.Jm * (new_nbrχ - nbrχ)
-                    rates[idx+nsites] = kmc.M/dθ*kmc.χ[i, j]*exp(-dE/kmc.T[i, j] - kmc.B/(kmc.T[i, j] - kmc.Tg))
+                    rates[idx+nsites] = kmc.M/abs(dθ)*(1-kmc.χ[i, j])*exp(-dE/kmc.T[i, j] - kmc.B/(kmc.T[i, j] - kmc.Tg))
                     event_handlers[idx+nsites] = (reorient!, (i, j, nhat))
                 end
             elseif kmc.χ[i, j] > 0 && kmc.T[i, j] > kmc.Tc
@@ -453,6 +455,8 @@ function crystallize!(kmc::KineticMonteCarlo, i::Int, j::Int, dχ::Real)
     kmc.χ[i, j] += dχ
     kmc.T[i, j] += dχ*kmc.ΔT
     kmc.k[i, j] += dχ*(kmc.k0mult-1)*kmc.k0
+    @assert 0-Ε <= kmc.χ[i, j] <= 1+Ε "χ is not between 0 and 1 at ($i, $j)"
+    @assert kmc.k0-Ε <= kmc.k[i, j] <= kmc.k0mult*kmc.k0+Ε "crystallize!; k is not between amorphous and crystallized at ($i, $j); $(kmc.k0) <= $(kmc.k[i, j]) <= $(kmc.k0mult*kmc.k0)"
 end
 
 function melt!(kmc::KineticMonteCarlo, i::Int, j::Int, dχ::Real)
@@ -460,6 +464,8 @@ function melt!(kmc::KineticMonteCarlo, i::Int, j::Int, dχ::Real)
     kmc.nhat[i, j] = rand(Uniform(-π,π))
     kmc.T[i, j] -= dχ*kmc.ΔT
     kmc.k[i, j] -= dχ*(kmc.k0mult-1)*kmc.k0
+    @assert 0-Ε <= kmc.χ[i, j] <= 1+Ε "χ is not between 0 and 1 at ($i, $j)"
+    @assert kmc.k0-Ε <= kmc.k[i, j] <= kmc.k0mult*kmc.k0+Ε "melt!; k is not between amorphous and crystallized at ($i, $j); $(kmc.k0) <= $(kmc.k[i, j]) <= $(kmc.k0mult*kmc.k0)"
 end
 
 function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int}, 
@@ -477,18 +483,11 @@ function deposit!(kmc::KineticMonteCarlo, irange::UnitRange{Int},
 end
 
 function do_event!(kmc::KineticMonteCarlo, bc!, bcdT!)
-    #=
-    ratesum = 0
-    events, rate_cumsum = while !(ratesum > 0)
-        events = kmc_events(kmc, bc!, bcdT!)
-        rate_cumsum = cumsum(events.rates)
-        ratesum = rate_cumsum[end]
-        events, rate_cumsum
-    end
-    =#
     events = kmc_events(kmc, bc!, bcdT!)
     rate_cumsum = cumsum(events.rates)
-    @assert rate_cumsum[end] > 0 "$(rate_cumsum[end]) not greater than 0 ? events = $events"
+    for (i, rate) in enumerate(events.rates)
+        @assert rate >= 0-Ε "$rate < 0 for event: $(events.event_handlers[i])"
+    end
     choice_dec = rand(Uniform(0, rate_cumsum[end]))
     choice_idx = (searchsorted(rate_cumsum, choice_dec)).start
     f, args = events.event_handlers[choice_idx]
@@ -883,6 +882,14 @@ function main2(pargs)
                 display(p)
                 readline()
             end
+            p = heatmap(permutedims(kmc.active .* kmc.χ); c=pal, size=(plot_len, plot_width), clims=(0.0,1.0))
+            title!("\$\\chi\$, \$t=$(round(kmc.t; digits=1))\$")
+            savefig(joinpath(outdir, "crystal-$iter.$figtype"))
+            if showplot
+                println("Enter to quit")
+                display(p)
+                readline()
+            end
             #=
             χadd = map(x -> begin
                            if !x[2]
@@ -898,8 +905,8 @@ function main2(pargs)
             χmult = kmc.χ[:, :, 1] .- 1/2
             crystal_field = permutedims(kmc.active .* χmult .* (kmc.nhat .+ π))
             p = heatmap(crystal_field; c=pal, size=(plot_len, plot_width), clims=climsχ)
-            title!("Crystallization, \$t=$(round(kmc.t; digits=1))\$")
-            savefig(joinpath(outdir, "crystal-$iter.$figtype"))
+            title!("\$f(\\chi,\\theta)\$, \$t=$(round(kmc.t; digits=1))\$")
+            savefig(joinpath(outdir, "orien-crystal-$iter.$figtype"))
             if showplot
                 println("Enter to quit")
                 display(p)
@@ -915,7 +922,8 @@ function main2(pargs)
                 readline()
             end
             writedlm(joinpath(outdir, "temp-$iter.csv"), permutedims(kmc.T), ',')
-            writedlm(joinpath(outdir, "crystal-$iter.csv"), crystal_field, ',')
+            writedlm(joinpath(outdir, "crystal-$iter.csv"), permutedims(kmc.active .* kmc.χ), ',')
+            writedlm(joinpath(outdir, "orien-crystal-$iter.csv"), crystal_field, ',')
             writedlm(joinpath(outdir, "cg-crystal-$iter.csv"), cg, ',')
             time_since_plot = 0.0
         end
